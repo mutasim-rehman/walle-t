@@ -1,0 +1,73 @@
+{
+  "splits": {
+    "train_ratio": 0.65,
+    "val_ratio": 0.15,
+    "test_ratio": 0.2,
+    "train_rows": 266838,
+    "val_rows": 78704,
+    "test_rows": 111467,
+    "date_start": "2021-07-05",
+    "date_end": "2026-04-16"
+  },
+  "metrics": {
+    "logistic_baseline": {
+      "val": {
+        "threshold": 0.49,
+        "accuracy": 0.5202658060581419,
+        "balanced_accuracy": 0.5331648504678512,
+        "precision_up": 0.4680864456567352,
+        "recall_up": 0.6426328676364684,
+        "f1_up": 0.5416449165402124,
+        "roc_auc": 0.5479256678637469,
+        "baseline_accuracy": 0.5589169546655824,
+        "positive_rate": 0.44108304533441756
+      },
+      "test": {
+        "threshold": 0.49,
+        "accuracy": 0.4975373877470462,
+        "balanced_accuracy": 0.5193744853647992,
+        "precision_up": 0.4477294004314614,
+        "recall_up": 0.6831666770179906,
+        "f1_up": 0.5409406094782224,
+        "roc_auc": 0.524469084685856,
+        "baseline_accuracy": 0.5666609848654759,
+        "positive_rate": 0.4333390151345241
+      },
+      "threshold_tuning": {
+        "objective": "balanced_accuracy",
+        "chosen_threshold": 0.49,
+        "validation_objective_score": 0.5331648504678512
+      }
+    },
+    "global_tree_model": {
+      "val": {
+        "threshold": 0.42,
+        "accuracy": 0.5435047773937792,
+        "balanced_accuracy": 0.5529186861155602,
+        "precision_up": 0.4865667013665862,
+        "recall_up": 0.6328100244850929,
+        "f1_up": 0.5501352298908144,
+        "roc_auc": 0.5820230351212513,
+        "baseline_accuracy": 0.5589169546655824,
+        "positive_rate": 0.44108304533441756
+      },
+      "test": {
+        "threshold": 0.42,
+        "accuracy": 0.5292777234517839,
+        "balanced_accuracy": 0.5464774030034766,
+        "precision_up": 0.4699883323970442,
+        "recall_up": 0.6754859946587168,
+        "f1_up": 0.5543040619744152,
+        "roc_auc": 0.5708808315772366,
+        "baseline_accuracy": 0.5666609848654759,
+        "positive_rate": 0.4333390151345241
+      },
+      "threshold_tuning": {
+        "objective": "balanced_accuracy",
+        "chosen_threshold": 0.42,
+        "validation_objective_score": 0.5529186861155602
+      }
+    }
+  },
+  "selected_best_model": "global_tree_model"
+}

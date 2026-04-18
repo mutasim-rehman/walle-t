@@ -5,9 +5,17 @@ import { LayoutDashboard, Activity, Users, Settings, LogOut, Search, Bell, Trend
 const Dashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('Overview');
+  const [companySymbol, setCompanySymbol] = useState('ABOT');
+  const quickSymbols = ['ABOT', 'ENGRO', 'LUCK', 'HBL', 'OGDC', 'PPL', 'TRG', 'FFC', 'MCB', 'UBL'];
 
   const handleLogout = () => {
     navigate('/');
+  };
+
+  const openCompanyPrediction = () => {
+    const symbol = companySymbol.trim().toUpperCase();
+    if (!symbol) return;
+    navigate(`/company/${encodeURIComponent(symbol)}`);
   };
 
   const navItems = [
@@ -129,6 +137,48 @@ const Dashboard = () => {
                    <Activity size={48} color="var(--text-muted)" style={{ opacity: 0.3, marginBottom: '16px' }} />
                    <p style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Interactive Bar/Line Chart Visualization Renders Here</p>
                  </div>
+              </div>
+
+              <div className="finance-card" style={{ padding: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', marginBottom: '6px' }}>PSX Company Prediction View</h3>
+                  <p style={{ color: 'var(--text-muted)' }}>Load a company chart and overlay the model prediction (5Y/3Y/1Y/YTD/6M/1M/1D).</p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    value={companySymbol}
+                    onChange={(e) => setCompanySymbol(e.target.value)}
+                    className="input-field"
+                    placeholder="Symbol (e.g. ABOT)"
+                    list="dashboard-symbols"
+                    style={{ marginBottom: 0, width: '180px' }}
+                  />
+                  <datalist id="dashboard-symbols">
+                    {quickSymbols.map((symbol) => (
+                      <option key={symbol} value={symbol} />
+                    ))}
+                  </datalist>
+                  <button className="btn-primary" onClick={openCompanyPrediction}>Open</button>
+                </div>
+              </div>
+
+              <div className="finance-card" style={{ padding: '24px' }}>
+                <h3 style={{ fontSize: '1.05rem', marginBottom: '10px' }}>Stock Options</h3>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '14px' }}>
+                  Quick pick a symbol to open its live chart with prediction overlay.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                  {quickSymbols.map((symbol) => (
+                    <button
+                      key={symbol}
+                      className="btn-secondary"
+                      onClick={() => navigate(`/company/${encodeURIComponent(symbol)}`)}
+                      style={{ fontSize: '0.85rem' }}
+                    >
+                      {symbol}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Data Table Placeholder */}

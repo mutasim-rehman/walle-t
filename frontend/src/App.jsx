@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoadingScreen from './components/LoadingScreen';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import CompanyPrediction from './pages/CompanyPrediction';
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -22,6 +23,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Login />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/company/:symbol" element={<CompanyPrediction />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>
