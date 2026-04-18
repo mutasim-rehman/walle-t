@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      '/api': {
+        target: 'http://localhost:4001',
+        changeOrigin: true,
+      },
       '/psx': {
         target: 'https://dps.psx.com.pk',
         changeOrigin: true,
