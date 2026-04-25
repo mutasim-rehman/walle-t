@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Activity, Users, Settings, LogOut, Search, Bell, TrendingUp, DollarSign, Download, Building, Shield } from 'lucide-react';
+import { LayoutDashboard, Activity, Users, Settings, LogOut, Search, Bell, TrendingUp, DollarSign, Download, Building, Shield, MessageSquare } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 
 const Dashboard = () => {
@@ -16,6 +16,11 @@ const Dashboard = () => {
   const [isActivityError, setIsActivityError] = useState(false);
   const [activities, setActivities] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [advisorPrompt, setAdvisorPrompt] = useState('How should I think about my portfolio given current market affairs?');
+  const [advisorReply, setAdvisorReply] = useState('');
+  const [advisorSources, setAdvisorSources] = useState([]);
+  const [advisorError, setAdvisorError] = useState('');
+  const [advisorLoading, setAdvisorLoading] = useState(false);
   const quickSymbols = ['ABOT', 'ENGRO', 'LUCK', 'HBL', 'OGDC', 'PPL', 'TRG', 'FFC', 'MCB', 'UBL'];
   const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
@@ -96,6 +101,39 @@ const Dashboard = () => {
       setActivityMessage('Could not save activity right now.');
     } finally {
       setActivityLoading(false);
+    }
+  };
+
+  const handleAskAdvisor = async (e) => {
+    e.preventDefault();
+    if (!currentUser?.id || !advisorPrompt.trim()) {
+      setAdvisorError('Enter a portfolio question first.');
+      return;
+    }
+
+    setAdvisorLoading(true);
+    setAdvisorError('');
+    try {
+      const res = await fetch(`${API_BASE}/advisor`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          message: advisorPrompt.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        setAdvisorError(data?.message || 'Failed to get advisor response.');
+        return;
+      }
+
+      setAdvisorReply(data.reply || '');
+      setAdvisorSources(Array.isArray(data.sources) ? data.sources : []);
+    } catch {
+      setAdvisorError('Could not reach the advisor service.');
+    } finally {
+      setAdvisorLoading(false);
     }
   };
 
@@ -327,6 +365,69 @@ const Dashboard = () => {
                   <p style={{ marginTop: '12px', color: isActivityError ? 'var(--status-negative)' : 'var(--status-positive)', fontWeight: 600 }}>
                     {activityMessage}
                   </p>
+                )}
+              </div>
+
+              <div className="finance-card" style={{ padding: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                  <div style={{ background: '#eff6ff', padding: '8px', borderRadius: '8px' }}>
+                    <MessageSquare size={18} color="var(--brand-primary)" />
+                  </div>
+                  <div>
+                    <h3 style={{ fontSize: '1.1rem', marginBottom: '4px' }}>ChatyBot Advisor</h3>
+                    <p style={{ color: 'var(--text-muted)' }}>
+                      Gemini uses your saved activity as portfolio context and can factor in current affairs.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleAskAdvisor}>
+                  <textarea
+                    value={advisorPrompt}
+                    onChange={(e) => setAdvisorPrompt(e.target.value)}
+                    className="input-field"
+                    placeholder="Ask about your portfolio, risk exposure, or how current events may affect your saved symbols."
+                    rows={4}
+                    style={{ resize: 'vertical', marginBottom: '12px' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
+                      Portfolio context is built from your saved symbols, activity types, budgets, and notes.
+                    </p>
+                    <button type="submit" className="btn-primary" disabled={advisorLoading}>
+                      {advisorLoading ? 'Thinking...' : 'Ask ChatyBot'}
+                    </button>
+                  </div>
+                </form>
+
+                {advisorError && (
+                  <p style={{ marginTop: '12px', color: 'var(--status-negative)', fontWeight: 600 }}>
+                    {advisorError}
+                  </p>
+                )}
+
+                {advisorReply && (
+                  <div style={{ marginTop: '16px', padding: '18px', border: '1px solid var(--border-color)', borderRadius: '10px', background: 'var(--bg-alt)' }}>
+                    <p style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>{advisorReply}</p>
+                    {advisorSources.length > 0 && (
+                      <div style={{ marginTop: '14px' }}>
+                        <p style={{ marginBottom: '8px', fontWeight: 700 }}>Grounded Sources</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {advisorSources.map((source) => (
+                            <a
+                              key={source.uri}
+                              href={source.uri}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: 'var(--brand-primary)', wordBreak: 'break-word' }}
+                            >
+                              {source.title}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 

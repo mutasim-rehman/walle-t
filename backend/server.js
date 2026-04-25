@@ -6,12 +6,14 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const dotenv = require("dotenv");
 const { google } = require("googleapis");
+const { GoogleGenAI } = require("@google/genai");
 const nodemailer = require("nodemailer");
 
 dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
 
 const PORT = Number(process.env.BACKEND_PORT || 4001);
 const ACTIVITIES_PATH = path.resolve(__dirname, "data", "activities.json");
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 
 const app = express();
 app.use(cors());
@@ -37,6 +39,128 @@ function readActivities() {
 function writeActivities(activities) {
   ensureActivitiesFile();
   fs.writeFileSync(ACTIVITIES_PATH, JSON.stringify(activities, null, 2), "utf-8");
+}
+
+let geminiClient = null;
+
+function getGeminiClient() {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) return null;
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({ apiKey });
+  }
+  return geminiClient;
+}
+
+function buildPortfolioSummary(activities) {
+  if (!activities.length) {
+    return {
+      summary:
+        "No saved portfolio activity yet. Give general guidance, ask one follow-up question, and mention that better advice needs saved symbols or budgets.",
+      symbolCount: 0,
+      totalBudget: 0,
+      symbols: [],
+    };
+  }
+
+  const bySymbol = new Map();
+  for (const activity of activities) {
+    const symbol = String(activity.symbol || "").trim().toUpperCase();
+    if (!symbol) continue;
+
+    const entry = bySymbol.get(symbol) || {
+      symbol,
+      activityCount: 0,
+      totalBudget: 0,
+      latestActivityAt: "",
+      activityTypes: new Set(),
+      notes: [],
+    };
+
+    entry.activityCount += 1;
+    entry.activityTypes.add(String(activity.activityType || "").trim());
+    if (Number.isFinite(activity.budget)) {
+      entry.totalBudget += Number(activity.budget);
+    }
+    if (!entry.latestActivityAt || new Date(activity.createdAt) > new Date(entry.latestActivityAt)) {
+      entry.latestActivityAt = activity.createdAt;
+    }
+    if (activity.note) {
+      entry.notes.push(String(activity.note).trim());
+    }
+
+    bySymbol.set(symbol, entry);
+  }
+
+  const symbols = [...bySymbol.values()]
+    .map((entry) => ({
+      ...entry,
+      activityTypes: [...entry.activityTypes].filter(Boolean),
+      notes: entry.notes.filter(Boolean).slice(-2),
+    }))
+    .sort((a, b) => {
+      if (b.totalBudget !== a.totalBudget) return b.totalBudget - a.totalBudget;
+      return new Date(b.latestActivityAt) - new Date(a.latestActivityAt);
+    });
+
+  const totalBudget = symbols.reduce((sum, entry) => sum + entry.totalBudget, 0);
+  const lines = symbols.map((entry) => {
+    const types = entry.activityTypes.length ? entry.activityTypes.join(", ") : "unspecified activity";
+    const budgetLabel = entry.totalBudget > 0 ? `$${entry.totalBudget.toFixed(2)}` : "no budget recorded";
+    const notes = entry.notes.length ? ` Notes: ${entry.notes.join(" | ")}` : "";
+    return `- ${entry.symbol}: ${entry.activityCount} activities, ${types}, ${budgetLabel}.${notes}`;
+  });
+
+  return {
+    summary: [`Tracked symbols: ${symbols.length}`, `Recorded budget: $${totalBudget.toFixed(2)}`, ...lines].join("\n"),
+    symbolCount: symbols.length,
+    totalBudget,
+    symbols,
+  };
+}
+
+function extractGroundingSources(response) {
+  const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+  const chunks = candidates.flatMap((candidate) =>
+    Array.isArray(candidate?.groundingMetadata?.groundingChunks)
+      ? candidate.groundingMetadata.groundingChunks
+      : []
+  );
+
+  const seen = new Set();
+  const sources = [];
+  for (const chunk of chunks) {
+    const uri = chunk?.web?.uri;
+    const title = chunk?.web?.title || uri;
+    if (!uri || seen.has(uri)) continue;
+    seen.add(uri);
+    sources.push({ title, uri });
+  }
+  return sources;
+}
+
+function classifyGeminiError(error) {
+  const message = String(error?.message || error || "");
+
+  if (message.includes("RESOURCE_EXHAUSTED") || message.includes('"code":429') || message.includes("quota")) {
+    return {
+      status: 429,
+      message:
+        "Gemini quota is exhausted for this API key right now. Check billing/rate limits or try again later.",
+    };
+  }
+
+  if (message.includes("NOT_FOUND") || message.includes('"code":404')) {
+    return {
+      status: 404,
+      message: `Gemini model "${GEMINI_MODEL}" is not available for this API key.`,
+    };
+  }
+
+  return {
+    status: 502,
+    message: "Failed to get advisor response from Gemini.",
+  };
 }
 
 function getGoogleConfig() {
@@ -347,6 +471,8 @@ app.get("/api/health", (_req, res) => {
     sheetIdPresent: Boolean(cfg.sheetId),
     serviceEmailPresent: Boolean(cfg.clientEmail),
     privateKeyPresent: Boolean(cfg.privateKey),
+    geminiConfigured: Boolean(getGeminiClient()),
+    geminiModel: GEMINI_MODEL,
     sheetName: cfg.sheetName || "(auto)",
   });
 });
@@ -506,6 +632,96 @@ app.post("/api/activities", async (req, res) => {
   activities.push(activity);
   writeActivities(activities);
   return res.status(201).json({ ok: true, activity });
+});
+
+app.post("/api/advisor", async (req, res) => {
+  const { userId, message } = req.body || {};
+  if (!userId || !String(userId).trim()) {
+    return res.status(400).json({ ok: false, message: "userId is required." });
+  }
+  if (!message || !String(message).trim()) {
+    return res.status(400).json({ ok: false, message: "message is required." });
+  }
+
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(500).json({
+      ok: false,
+      message: "Gemini API key is missing. Set GEMINI_API_KEY in the backend environment.",
+    });
+  }
+
+  let users = [];
+  try {
+    users = await readUsersFromSheet();
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to read users from Google Sheet.",
+      details: String(error.message || error),
+    });
+  }
+
+  const user = users.find((entry) => entry.id === String(userId).trim());
+  if (!user) {
+    return res.status(404).json({ ok: false, message: "User not found." });
+  }
+
+  const activities = readActivities()
+    .filter((activity) => activity.userId === user.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const portfolio = buildPortfolioSummary(activities);
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = [
+    "You are Walle-T's portfolio advisor assistant.",
+    "Your job is to advise the user based on their saved portfolio activity and current affairs.",
+    "Use current affairs when relevant by grounding with Google Search.",
+    "Keep the answer practical, concise, and tailored to the user's symbols.",
+    "Do not claim certainty or guaranteed returns.",
+    "This is educational analysis, not professional financial advice.",
+    "",
+    `Date: ${today}`,
+    `User: ${user.username} (${user.email})`,
+    "",
+    "Saved portfolio/activity context:",
+    portfolio.summary,
+    "",
+    "User question:",
+    String(message).trim(),
+    "",
+    "Answer format:",
+    "1. Short view",
+    "2. Portfolio-specific observations",
+    "3. Current-affairs impact",
+    "4. Suggested next steps",
+  ].join("\n");
+
+  try {
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        temperature: 0.3,
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    return res.json({
+      ok: true,
+      reply: String(response?.text || "").trim(),
+      model: GEMINI_MODEL,
+      portfolio,
+      sources: extractGroundingSources(response),
+    });
+  } catch (error) {
+    console.error("Advisor request failed:", error);
+    const classified = classifyGeminiError(error);
+    return res.status(classified.status).json({
+      ok: false,
+      message: classified.message,
+      details: String(error.message || error),
+    });
+  }
 });
 
 app.listen(PORT, () => {

@@ -8,11 +8,13 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "@google/genai": "^1.50.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "googleapis": "^171.4.0",
-    "nodemailer": "^8.0.5"
+    "nodemailer": "^8.0.5",
+    "openai": "^6.34.0"
   }
 }
