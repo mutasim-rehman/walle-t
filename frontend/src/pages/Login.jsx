@@ -117,11 +117,11 @@ const Login = () => {
   };
 
   return (
-    <div className="full-center" style={{ position: 'relative', overflow: 'hidden' }}>
+    <div className="full-center" style={{ position: 'relative', padding: '40px 0' }}>
       {/* Background Decor */}
       <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '30vh', background: 'linear-gradient(135deg, var(--brand-primary), #1e3a8a)', zIndex: 0 }} />
       
-      <div className={`finance-card animate-fade-in ${isError ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: '440px', padding: '48px 40px', zIndex: 10, position: 'relative', marginTop: '10vh' }}>
+      <div className={`finance-card animate-fade-in ${isError ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: mode === 'signup' ? '600px' : '440px', padding: '48px 40px', zIndex: 10, position: 'relative' }}>
         
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '32px' }}>
           <div style={{ background: '#eff6ff', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #bfdbfe' }}>
