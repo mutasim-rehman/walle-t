@@ -20,6 +20,38 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const rateWindowMs = Number(process.env.API_RATE_WINDOW_MS || 60_000);
+const rateMax = Number(process.env.API_RATE_MAX || 240);
+const rateBuckets = new Map();
+
+app.use("/api", (req, res, next) => {
+  const key = `${req.ip || "unknown"}:${req.path}`;
+  const now = Date.now();
+  const bucket = rateBuckets.get(key) || { count: 0, resetAt: now + rateWindowMs };
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + rateWindowMs;
+  }
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (bucket.count > rateMax) {
+    return res.status(429).json({
+      ok: false,
+      message: "Too many requests. Please retry shortly.",
+      details: `rate_limit_exceeded windowMs=${rateWindowMs} max=${rateMax}`,
+    });
+  }
+
+  const started = Date.now();
+  res.on("finish", () => {
+    const elapsed = Date.now() - started;
+    if (elapsed > 1200) {
+      console.warn(`[api-latency] ${req.method} ${req.path} ${elapsed}ms`);
+    }
+  });
+  return next();
+});
+
 function ensureJsonFile(filePath, fallbackJson) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -1644,6 +1676,35 @@ function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
 
+function hashString(str) {
+  let h = 0;
+  const s = String(str || "");
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h << 5) - h + s.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+}
+
+function generateSyntheticSeries(seedKey, { points = 120, start = 100, volatility = 0.004 } = {}) {
+  const seed = hashString(seedKey);
+  const out = [];
+  let price = start;
+  const now = Date.now();
+  for (let i = points - 1; i >= 0; i -= 1) {
+    const t = now - i * 60 * 60 * 1000;
+    const wave = Math.sin((seed % 37) * 0.1 + i * 0.17) * volatility;
+    const drift = ((seed % 11) - 5) * 0.00006;
+    const step = wave + drift;
+    price = Math.max(0.0001, price * (1 + step));
+    out.push({
+      time: new Date(t).toISOString(),
+      value: Number(price.toFixed(6)),
+    });
+  }
+  return out;
+}
+
 async function priceHoldings(holdings) {
   const priced = [];
   let total = 0;
@@ -1791,6 +1852,273 @@ app.post("/api/forecast", async (req, res) => {
     },
     series: { best, base, worst },
     narrative,
+  });
+});
+
+app.get("/api/settings/:userId", async (req, res) => {
+  const userId = String(req.params.userId || "").trim();
+  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+  let profile = null;
+  try {
+    profile = await readProfileFromSheet(userId);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to read settings from Google Sheet.",
+      details: String(error.message || error),
+    });
+  }
+  const settings = profile?.extras?.settings || {
+    currency: "USD",
+    timezone: "UTC",
+    riskMode: "moderate",
+    notifications: true,
+  };
+  return res.json({ ok: true, settings });
+});
+
+app.post("/api/settings/:userId", async (req, res) => {
+  const userId = String(req.params.userId || "").trim();
+  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+  const incoming = req.body?.settings && typeof req.body.settings === "object" ? req.body.settings : {};
+
+  let profile = null;
+  try {
+    profile = await readProfileFromSheet(userId);
+  } catch {
+    profile = null;
+  }
+  const nextProfile = {
+    userId,
+    age: profile?.age ?? null,
+    country: profile?.country || "",
+    monthlyIncome: profile?.monthlyIncome ?? null,
+    monthlyExpenses: profile?.monthlyExpenses ?? null,
+    currentCash: profile?.currentCash ?? null,
+    assets: profile?.assets || {},
+    liabilities: profile?.liabilities || {},
+    extras: {
+      ...(profile?.extras || {}),
+      settings: {
+        currency: String(incoming.currency || profile?.extras?.settings?.currency || "USD"),
+        timezone: String(incoming.timezone || profile?.extras?.settings?.timezone || "UTC"),
+        riskMode: String(incoming.riskMode || profile?.extras?.settings?.riskMode || "moderate"),
+        notifications:
+          typeof incoming.notifications === "boolean"
+            ? incoming.notifications
+            : Boolean(profile?.extras?.settings?.notifications ?? true),
+      },
+    },
+    updatedAt: new Date().toISOString(),
+    createdAt: profile?.createdAt || new Date().toISOString(),
+  };
+  try {
+    await upsertProfileToSheet(nextProfile);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to save settings to Google Sheet.",
+      details: String(error.message || error),
+    });
+  }
+  return res.json({ ok: true, settings: nextProfile.extras.settings });
+});
+
+app.get("/api/market/forex/:pair", (req, res) => {
+  const pair = String(req.params.pair || "").trim().toUpperCase();
+  if (!/^[A-Z]{6}$/.test(pair)) {
+    return res.status(400).json({ ok: false, message: "pair must be 6 letters, e.g. EURUSD" });
+  }
+  const baseMap = {
+    EURUSD: 1.08,
+    GBPUSD: 1.27,
+    USDJPY: 154.2,
+    AUDUSD: 0.66,
+    USDCAD: 1.36,
+    USDCHF: 0.91,
+  };
+  const start = baseMap[pair] || 1 + (hashString(pair) % 50) / 100;
+  const series = generateSyntheticSeries(`forex:${pair}`, { points: 160, start, volatility: 0.0015 });
+  return res.json({ ok: true, pair, series, latest: series[series.length - 1] });
+});
+
+app.get("/api/market/options/:symbol", (req, res) => {
+  const symbol = String(req.params.symbol || "").trim().toUpperCase();
+  if (!symbol) return res.status(400).json({ ok: false, message: "symbol is required." });
+  const seed = hashString(symbol);
+  const spot = 80 + (seed % 400) / 5;
+  const expiries = [14, 30, 60].map((d) => {
+    const dt = new Date();
+    dt.setDate(dt.getDate() + d);
+    return dt.toISOString().slice(0, 10);
+  });
+  const strikes = [-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15].map((p) => Number((spot * (1 + p)).toFixed(2)));
+  const chain = [];
+  for (const expiry of expiries) {
+    for (const strike of strikes) {
+      const moneyness = Math.abs((strike - spot) / spot);
+      const timeValue = Math.max(0.5, (60 - Math.abs(new Date(expiry) - Date.now()) / (1000 * 60 * 60 * 24)) * 0.03);
+      const basePremium = Math.max(0.2, spot * (0.015 + moneyness * 0.2) + timeValue);
+      const callPremium = Number(basePremium.toFixed(2));
+      const putPremium = Number((basePremium * (0.95 + moneyness)).toFixed(2));
+      chain.push({
+        symbol,
+        expiry,
+        strike,
+        callPremium,
+        putPremium,
+      });
+    }
+  }
+  const series = generateSyntheticSeries(`options:${symbol}`, { points: 140, start: spot, volatility: 0.0035 });
+  return res.json({ ok: true, symbol, spot: Number(spot.toFixed(2)), chain, series });
+});
+
+app.post("/api/trade/forex", async (req, res) => {
+  const { userId, pair, side, units } = req.body || {};
+  const id = String(userId || "").trim();
+  const asset = String(pair || "").trim().toUpperCase();
+  const direction = String(side || "").trim().toUpperCase();
+  const qty = Number(units);
+  if (!id || !/^[A-Z]{6}$/.test(asset) || !["BUY", "SELL"].includes(direction) || !Number.isFinite(qty) || qty <= 0) {
+    return res.status(400).json({ ok: false, message: "userId, pair(6 letters), side(BUY/SELL), units are required." });
+  }
+
+  let transactions = [];
+  try {
+    transactions = await readTransactionsForUser(id, { limit: 800 });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
+  }
+  const ledger = computeLedgerState(transactions);
+  const quotes = generateSyntheticSeries(`forex:${asset}`, { points: 2, start: 1 + (hashString(asset) % 50) / 100, volatility: 0.0015 });
+  const mid = Number(quotes[quotes.length - 1].value);
+  const spreadBps = 8;
+  const price = direction === "BUY" ? mid * (1 + spreadBps / 10000) : mid * (1 - spreadBps / 10000);
+  const amount = price * qty;
+
+  if (direction === "BUY" && ledger.cash < amount) {
+    return res.status(400).json({ ok: false, message: "Insufficient cash.", cash: ledger.cash, required: amount });
+  }
+  const cashAfter = direction === "BUY" ? ledger.cash - amount : ledger.cash + amount;
+  const type = direction === "BUY" ? "FOREX_BUY" : "FOREX_SELL";
+  const createdAt = new Date().toISOString();
+  try {
+    await appendTransactionRow({
+      createdAt,
+      userId: id,
+      type,
+      symbol: asset,
+      qty,
+      price,
+      amount,
+      cashAfter,
+      note: "Synthetic forex execution.",
+      metaJson: { assetClass: "forex", side: direction, spreadBps },
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Failed to persist forex trade.", details: String(error.message || error) });
+  }
+  return res.status(201).json({ ok: true, trade: { userId: id, pair: asset, side: direction, units: qty, price, amount, cashAfter } });
+});
+
+app.post("/api/trade/options", async (req, res) => {
+  const { userId, symbol, side, contractType, strike, expiry, contracts, premium } = req.body || {};
+  const id = String(userId || "").trim();
+  const sym = String(symbol || "").trim().toUpperCase();
+  const direction = String(side || "").trim().toUpperCase();
+  const optType = String(contractType || "").trim().toUpperCase();
+  const qty = Number(contracts);
+  const strikeNum = Number(strike);
+  const premiumNum = Number(premium);
+  const lotSize = 100;
+  if (!id || !sym || !["BUY", "SELL"].includes(direction) || !["CALL", "PUT"].includes(optType) || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(strikeNum) || !expiry) {
+    return res.status(400).json({ ok: false, message: "userId, symbol, side, contractType, strike, expiry, contracts are required." });
+  }
+
+  const computedPremium = Number.isFinite(premiumNum) && premiumNum > 0 ? premiumNum : Math.max(0.5, strikeNum * 0.02);
+  let transactions = [];
+  try {
+    transactions = await readTransactionsForUser(id, { limit: 800 });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
+  }
+  const ledger = computeLedgerState(transactions);
+  const amount = computedPremium * qty * lotSize;
+  if (direction === "BUY" && ledger.cash < amount) {
+    return res.status(400).json({ ok: false, message: "Insufficient cash.", cash: ledger.cash, required: amount });
+  }
+  const cashAfter = direction === "BUY" ? ledger.cash - amount : ledger.cash + amount;
+  const createdAt = new Date().toISOString();
+  const optionSymbol = `${sym}_${expiry}_${strikeNum}_${optType}`;
+  try {
+    await appendTransactionRow({
+      createdAt,
+      userId: id,
+      type: direction === "BUY" ? "OPTION_BUY" : "OPTION_SELL",
+      symbol: optionSymbol,
+      qty,
+      price: computedPremium,
+      amount,
+      cashAfter,
+      note: "Synthetic option premium execution.",
+      metaJson: { assetClass: "option", underlying: sym, expiry, strike: strikeNum, optionType: optType, lotSize },
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Failed to persist options trade.", details: String(error.message || error) });
+  }
+  return res.status(201).json({
+    ok: true,
+    trade: { userId: id, symbol: sym, side: direction, contractType: optType, strike: strikeNum, expiry, contracts: qty, premium: computedPremium, amount, cashAfter },
+  });
+});
+
+app.get("/api/risk/:userId", async (req, res) => {
+  const userId = String(req.params.userId || "").trim();
+  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+  let transactions = [];
+  try {
+    transactions = await readTransactionsForUser(userId, { limit: 1200 });
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
+  }
+  const byAsset = {
+    stock: 0,
+    forex: 0,
+    option: 0,
+    other: 0,
+  };
+  const bySymbolAmount = new Map();
+  for (const tx of transactions) {
+    const assetClass = tx.metaJson?.assetClass || (String(tx.type || "").includes("FOREX") ? "forex" : String(tx.type || "").includes("OPTION") ? "option" : ["BUY", "SELL", "PORTFOLIO_IMPORT"].includes(String(tx.type || "").toUpperCase()) ? "stock" : "other");
+    const amount = Math.abs(Number(tx.amount || 0));
+    if (!Number.isFinite(amount)) continue;
+    if (!byAsset[assetClass]) byAsset[assetClass] = 0;
+    byAsset[assetClass] += amount;
+    const s = String(tx.symbol || "UNKNOWN");
+    bySymbolAmount.set(s, (bySymbolAmount.get(s) || 0) + amount);
+  }
+  const totalExposure = Object.values(byAsset).reduce((a, b) => a + b, 0);
+  const topSymbols = [...bySymbolAmount.entries()]
+    .map(([symbol, exposure]) => ({ symbol, exposure }))
+    .sort((a, b) => b.exposure - a.exposure)
+    .slice(0, 5);
+  const concentration = topSymbols.length ? topSymbols[0].exposure / Math.max(1, totalExposure) : 0;
+  const riskScore = clamp(Math.round(100 - concentration * 55 - (byAsset.option / Math.max(1, totalExposure)) * 20 - (byAsset.forex / Math.max(1, totalExposure)) * 10), 15, 95);
+  return res.json({
+    ok: true,
+    risk: {
+      score: riskScore,
+      totalExposure,
+      concentration: Number((concentration * 100).toFixed(2)),
+      assetMix: Object.fromEntries(Object.entries(byAsset).map(([k, v]) => [k, Number(v.toFixed(2))])),
+      topSymbols,
+      shocks: {
+        equityMinus10Pct: Number((totalExposure * 0.1).toFixed(2)),
+        fxMinus5Pct: Number((byAsset.forex * 0.05).toFixed(2)),
+        volSpikeOptionsMinus20Pct: Number((byAsset.option * 0.2).toFixed(2)),
+      },
+    },
   });
 });
 
