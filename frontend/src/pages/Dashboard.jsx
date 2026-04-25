@@ -3,6 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Activity, Users, Settings, LogOut, Search, Bell, TrendingUp, DollarSign, Download, Building, Shield, MessageSquare } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 
+function formatMoney(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '-';
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function toNum(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const { currentUser, logout } = useAuth();
@@ -23,6 +36,22 @@ const Dashboard = () => {
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const quickSymbols = ['ABOT', 'ENGRO', 'LUCK', 'HBL', 'OGDC', 'PPL', 'TRG', 'FFC', 'MCB', 'UBL'];
   const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+
+  const [profileStatusLoading, setProfileStatusLoading] = useState(false);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState('');
+  const [portfolio, setPortfolio] = useState(null);
+
+  const [tradeSide, setTradeSide] = useState('BUY');
+  const [tradeSymbol, setTradeSymbol] = useState('ABOT');
+  const [tradeQty, setTradeQty] = useState('1');
+  const [tradeMessage, setTradeMessage] = useState('');
+  const [tradeIsError, setTradeIsError] = useState(false);
+  const [tradeLoading, setTradeLoading] = useState(false);
+
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastError, setForecastError] = useState('');
+  const [forecast, setForecast] = useState(null);
 
   useEffect(() => {
     async function loadActivities() {
@@ -49,6 +78,72 @@ const Dashboard = () => {
     loadActivities();
   }, [API_BASE, currentUser?.id]);
 
+  useEffect(() => {
+    async function checkProfile() {
+      if (!currentUser?.id) return;
+      setProfileStatusLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/profile/${encodeURIComponent(currentUser.id)}`);
+        const data = await res.json();
+        // If profile cannot be read (permissions/sheet issues) or is incomplete, force onboarding.
+        // This prevents silently skipping onboarding on first login.
+        if (!res.ok || !data?.ok || !data?.profile || !data.isComplete) {
+          navigate('/onboarding');
+          return;
+        }
+      } catch {
+        navigate('/onboarding');
+      } finally {
+        setProfileStatusLoading(false);
+      }
+    }
+    checkProfile();
+  }, [API_BASE, currentUser?.id, navigate]);
+
+  const loadPortfolio = async () => {
+    if (!currentUser?.id) return;
+    setPortfolioLoading(true);
+    setPortfolioError('');
+    try {
+      const res = await fetch(`${API_BASE}/portfolio/${encodeURIComponent(currentUser.id)}`);
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        const details = data?.details ? ` (${data.details})` : '';
+        setPortfolioError((data?.message || 'Failed to load portfolio.') + details);
+        return;
+      }
+      setPortfolio(data);
+    } catch {
+      setPortfolioError('Could not connect to portfolio service.');
+    } finally {
+      setPortfolioLoading(false);
+    }
+  };
+
+  const loadForecast = async () => {
+    if (!currentUser?.id) return;
+    setForecastLoading(true);
+    setForecastError('');
+    try {
+      const res = await fetch(`${API_BASE}/forecast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        const details = data?.details ? ` (${data.details})` : '';
+        setForecastError((data?.message || 'Failed to load forecast.') + details);
+        return;
+      }
+      setForecast(data);
+    } catch {
+      setForecastError('Could not connect to forecast service.');
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     logout();
     navigate('/');
@@ -58,6 +153,46 @@ const Dashboard = () => {
     const symbol = companySymbol.trim().toUpperCase();
     if (!symbol) return;
     navigate(`/company/${encodeURIComponent(symbol)}`);
+  };
+
+  const handleTrade = async (e) => {
+    e.preventDefault();
+    const sym = tradeSymbol.trim().toUpperCase();
+    const q = toNum(tradeQty);
+    if (!currentUser?.id || !sym || q == null || q <= 0) {
+      setTradeIsError(true);
+      setTradeMessage('Enter a symbol and a valid quantity.');
+      return;
+    }
+    setTradeLoading(true);
+    setTradeMessage('');
+    setTradeIsError(false);
+    try {
+      const res = await fetch(`${API_BASE}/trade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          side: tradeSide,
+          symbol: sym,
+          qty: q,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        setTradeIsError(true);
+        setTradeMessage(data?.message || 'Trade failed.');
+        return;
+      }
+      setTradeIsError(false);
+      setTradeMessage(`Trade placed: ${tradeSide} ${q} ${sym} @ ${formatMoney(data.trade?.price)}.`);
+      await loadPortfolio();
+    } catch {
+      setTradeIsError(true);
+      setTradeMessage('Could not reach the trading service.');
+    } finally {
+      setTradeLoading(false);
+    }
   };
 
   const handleSaveActivity = async (e) => {
@@ -220,9 +355,9 @@ const Dashboard = () => {
               {/* Top Stats */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
                 {[
-                  { label: 'Total Net Asset Value', value: '$1,294,500.00', icon: DollarSign, trend: '+4.2%', color: 'var(--brand-primary)', bg: '#eff6ff' },
+                  { label: 'Simulated Portfolio Cash', value: portfolio?.cash != null ? formatMoney(portfolio.cash) : '$-', icon: DollarSign, trend: profileStatusLoading ? '...' : 'Live', color: 'var(--brand-primary)', bg: '#eff6ff' },
                   { label: 'Shock Resilience Score', value: '88/100', icon: Shield, trend: '+1.5%', color: 'var(--status-positive)', bg: 'var(--status-positive-bg)' },
-                  { label: 'Projected Monthly Yield', value: '$8,440.25', icon: TrendingUp, trend: '+5.8%', color: 'var(--brand-primary)', bg: '#eff6ff' },
+                  { label: 'Holdings Count', value: portfolio?.holdings?.length != null ? String(portfolio.holdings.length) : '-', icon: TrendingUp, trend: 'Derived', color: 'var(--brand-primary)', bg: '#eff6ff' },
                 ].map((stat, i) => (
                   <div key={i} className="finance-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -502,11 +637,251 @@ const Dashboard = () => {
               </div>
             </div>
           )}
+
+          {activeTab === 'Portfolios' && (
+            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div className="finance-card" style={{ padding: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div>
+                    <h3 style={{ margin: 0 }}>Buy / Sell (Simulated)</h3>
+                    <p style={{ margin: '6px 0 0 0', color: 'var(--text-muted)' }}>
+                      Trades are priced using the latest PSX close and stored in your Google Sheet transaction ledger.
+                    </p>
+                  </div>
+                  <button className="btn-secondary" onClick={loadPortfolio} disabled={portfolioLoading}>
+                    {portfolioLoading ? 'Loading...' : 'Refresh'}
+                  </button>
+                </div>
+
+                {portfolioError && (
+                  <p style={{ marginTop: 12, color: 'var(--status-negative)', fontWeight: 700 }}>{portfolioError}</p>
+                )}
+
+                <form onSubmit={handleTrade} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginTop: 14 }}>
+                  <select className="input-field" value={tradeSide} onChange={(e) => setTradeSide(e.target.value)} style={{ marginBottom: 0 }}>
+                    <option value="BUY">BUY</option>
+                    <option value="SELL">SELL</option>
+                  </select>
+                  <input
+                    className="input-field"
+                    value={tradeSymbol}
+                    onChange={(e) => setTradeSymbol(e.target.value)}
+                    placeholder="Symbol (e.g. ABOT)"
+                    style={{ marginBottom: 0 }}
+                    list="trade-symbols"
+                  />
+                  <datalist id="trade-symbols">
+                    {quickSymbols.map((s) => (
+                      <option key={s} value={s} />
+                    ))}
+                  </datalist>
+                  <input
+                    className="input-field"
+                    value={tradeQty}
+                    onChange={(e) => setTradeQty(e.target.value)}
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="Qty"
+                    style={{ marginBottom: 0 }}
+                  />
+                  <button type="submit" className="btn-primary" disabled={tradeLoading}>
+                    {tradeLoading ? 'Placing...' : 'Execute Trade'}
+                  </button>
+                </form>
+
+                {tradeMessage && (
+                  <p style={{ marginTop: 12, color: tradeIsError ? 'var(--status-negative)' : 'var(--status-positive)', fontWeight: 700 }}>
+                    {tradeMessage}
+                  </p>
+                )}
+
+                {portfolio?.cash != null && (
+                  <p style={{ marginTop: 10, color: 'var(--text-muted)', marginBottom: 0 }}>
+                    Current simulated cash: <strong>{formatMoney(portfolio.cash)}</strong>
+                  </p>
+                )}
+              </div>
+
+              <div className="finance-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-alt)' }}>
+                  <h3 style={{ fontSize: '1.05rem', margin: 0 }}>Holdings</h3>
+                </div>
+                {!portfolio && (
+                  <div style={{ padding: 18 }}>
+                    <p style={{ color: 'var(--text-muted)', margin: 0 }}>Click Refresh to load your portfolio.</p>
+                  </div>
+                )}
+                {portfolio && (portfolio.holdings?.length ?? 0) === 0 && (
+                  <div style={{ padding: 18 }}>
+                    <p style={{ color: 'var(--text-muted)', margin: 0 }}>No holdings yet. Place a BUY trade to create one.</p>
+                  </div>
+                )}
+                {portfolio && (portfolio.holdings?.length ?? 0) > 0 && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '14px 24px', fontWeight: 700 }}>Symbol</th>
+                        <th style={{ padding: '14px 24px', fontWeight: 700, textAlign: 'right' }}>Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {portfolio.holdings.map((h) => (
+                        <tr key={h.symbol} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '14px 24px', fontWeight: 800 }}>{h.symbol}</td>
+                          <td style={{ padding: '14px 24px', textAlign: 'right', fontWeight: 700 }}>{Number(h.qty).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="finance-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-alt)' }}>
+                  <h3 style={{ fontSize: '1.05rem', margin: 0 }}>Recent Transactions</h3>
+                </div>
+                {portfolio && (portfolio.transactions?.length ?? 0) === 0 && (
+                  <div style={{ padding: 18 }}>
+                    <p style={{ color: 'var(--text-muted)', margin: 0 }}>No transactions yet. Onboarding will add a DEPOSIT row.</p>
+                  </div>
+                )}
+                {portfolio && (portfolio.transactions?.length ?? 0) > 0 && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '14px 24px', fontWeight: 700 }}>Date</th>
+                        <th style={{ padding: '14px 24px', fontWeight: 700 }}>Type</th>
+                        <th style={{ padding: '14px 24px', fontWeight: 700 }}>Symbol</th>
+                        <th style={{ padding: '14px 24px', fontWeight: 700, textAlign: 'right' }}>Qty</th>
+                        <th style={{ padding: '14px 24px', fontWeight: 700, textAlign: 'right' }}>Amount</th>
+                        <th style={{ padding: '14px 24px', fontWeight: 700, textAlign: 'right' }}>Cash After</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {portfolio.transactions.slice(0, 12).map((t, i) => (
+                        <tr key={`${t.createdAt}-${i}`} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '14px 24px', color: 'var(--text-muted)' }}>{t.createdAt ? new Date(t.createdAt).toLocaleString() : '-'}</td>
+                          <td style={{ padding: '14px 24px', fontWeight: 800 }}>{t.type}</td>
+                          <td style={{ padding: '14px 24px', fontWeight: 700 }}>{t.symbol || '-'}</td>
+                          <td style={{ padding: '14px 24px', textAlign: 'right' }}>{t.qty == null ? '-' : Number(t.qty).toLocaleString()}</td>
+                          <td style={{ padding: '14px 24px', textAlign: 'right', fontWeight: 700 }}>{t.amount == null ? '-' : formatMoney(t.amount)}</td>
+                          <td style={{ padding: '14px 24px', textAlign: 'right', fontWeight: 700 }}>{t.cashAfter == null ? '-' : formatMoney(t.cashAfter)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'Scenarios' && (
+            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div className="finance-card" style={{ padding: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <h3 style={{ margin: 0 }}>Financial Future Forecast</h3>
+                    <p style={{ margin: '6px 0 0 0', color: 'var(--text-muted)' }}>
+                      Net-worth projection (best/base/worst) using your onboarding inputs + simulated portfolio.
+                    </p>
+                  </div>
+                  <button className="btn-primary" onClick={loadForecast} disabled={forecastLoading}>
+                    {forecastLoading ? 'Computing...' : 'Run forecast'}
+                  </button>
+                </div>
+
+                {forecastError && (
+                  <p style={{ marginTop: 12, color: 'var(--status-negative)', fontWeight: 700 }}>{forecastError}</p>
+                )}
+
+                {forecast?.now && (
+                  <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                    <div className="finance-card" style={{ padding: 14 }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Net Worth (now)</div>
+                      <div style={{ fontWeight: 800 }}>{formatMoney(forecast.now.netWorth)}</div>
+                    </div>
+                    <div className="finance-card" style={{ padding: 14 }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Investable (cash+portfolio)</div>
+                      <div style={{ fontWeight: 800 }}>{formatMoney(forecast.now.investable)}</div>
+                    </div>
+                    <div className="finance-card" style={{ padding: 14 }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Monthly Net Cashflow</div>
+                      <div style={{ fontWeight: 800 }}>{formatMoney(forecast.now.monthlyNetCashflow)}</div>
+                    </div>
+                    <div className="finance-card" style={{ padding: 14 }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Portfolio Value</div>
+                      <div style={{ fontWeight: 800 }}>{formatMoney(forecast.now.portfolioValue)}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {forecast?.series && (
+                <div className="finance-card" style={{ padding: 24 }}>
+                  <h3 style={{ marginTop: 0 }}>Projection (10 years, monthly)</h3>
+                  <ForecastChart series={forecast.series} />
+                  {forecast.narrative && (
+                    <div style={{ marginTop: 16, padding: 16, border: '1px solid var(--border-color)', borderRadius: 10, background: 'var(--bg-alt)' }}>
+                      <h4 style={{ marginTop: 0, marginBottom: 10 }}>Scenario Summary</h4>
+                      <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>{forecast.narrative}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
       </main>
     </div>
   );
 };
+
+function ForecastChart({ series }) {
+  const width = 920;
+  const height = 380;
+  const leftPad = 52;
+  const rightPad = 16;
+  const topPad = 12;
+  const bottomPad = 34;
+
+  const best = Array.isArray(series.best) ? series.best : [];
+  const base = Array.isArray(series.base) ? series.base : [];
+  const worst = Array.isArray(series.worst) ? series.worst : [];
+  const combined = [...best, ...base, ...worst].filter((p) => Number.isFinite(Number(p.value)));
+  if (!combined.length) return <p style={{ color: 'var(--text-muted)' }}>No forecast series available.</p>;
+
+  const min = Math.min(...combined.map((p) => Number(p.value)));
+  const max = Math.max(...combined.map((p) => Number(p.value)));
+  const span = Math.max(1e-9, max - min);
+
+  const toPath = (pts) => {
+    const chartW = width - leftPad - rightPad;
+    const chartH = height - topPad - bottomPad;
+    const s = Math.max(1, pts.length - 1);
+    return pts
+      .map((p, i) => {
+        const x = leftPad + (i / s) * chartW;
+        const y = topPad + ((max - Number(p.value)) / span) * chartH;
+        return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      })
+      .join(' ');
+  };
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="380" style={{ border: '1px solid var(--border-color)', borderRadius: 8, background: '#fff' }}>
+        <path d={toPath(worst)} fill="none" stroke="#ef4444" strokeWidth="2.5" />
+        <path d={toPath(base)} fill="none" stroke="#2563eb" strokeWidth="2.5" />
+        <path d={toPath(best)} fill="none" stroke="#16a34a" strokeWidth="2.5" />
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, color: 'var(--text-muted)' }}>
+        <span><strong style={{ color: '#16a34a' }}>Best</strong> / <strong style={{ color: '#2563eb' }}>Base</strong> / <strong style={{ color: '#ef4444' }}>Worst</strong></span>
+        <span>Min: {formatMoney(min)} · Max: {formatMoney(max)}</span>
+      </div>
+    </div>
+  );
+}
 
 export default Dashboard;

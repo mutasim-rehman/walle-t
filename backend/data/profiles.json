@@ -1,0 +1,14 @@
+[
+  {
+    "userId": "5bef167b-c98a-4087-8784-25a509305cc3",
+    "age": 20,
+    "country": "Pakistan",
+    "monthlyIncome": 69000,
+    "monthlyExpenses": 12000,
+    "currentCash": 120000,
+    "assets": {},
+    "liabilities": {},
+    "updatedAt": "2026-04-25T07:06:50.391Z",
+    "createdAt": "2026-04-25T07:06:50.392Z"
+  }
+]

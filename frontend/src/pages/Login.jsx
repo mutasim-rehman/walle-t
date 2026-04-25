@@ -1,24 +1,45 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, User, ArrowRight, Building, ShieldCheck, Mail } from 'lucide-react';
+import { Lock, User, ArrowRight, Building, ShieldCheck, Mail, Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
+
+function toNum(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
 const Login = () => {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
+  const [age, setAge] = useState('');
+  const [country, setCountry] = useState('');
+  const [monthlyIncome, setMonthlyIncome] = useState('');
+  const [monthlyExpenses, setMonthlyExpenses] = useState('');
+  const [currentCash, setCurrentCash] = useState('');
+  const [landValue, setLandValue] = useState('');
+  const [apartmentsValue, setApartmentsValue] = useState('');
+  const [loanBalance, setLoanBalance] = useState('');
+  const [medicalInsurance, setMedicalInsurance] = useState('no');
+  const [holdings, setHoldings] = useState([{ symbol: '', qty: '' }]);
   const navigate = useNavigate();
-  const { login, signup, isAuthenticated } = useAuth();
+  const { login, signupComplete, isAuthenticated, authReady } = useAuth();
 
   useEffect(() => {
-    if (isAuthenticated) navigate('/dashboard');
-  }, [isAuthenticated, navigate]);
+    if (authReady && isAuthenticated) navigate('/dashboard');
+  }, [authReady, isAuthenticated, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (busy) return;
     if (!username.trim() || !password.trim()) {
       setIsError(true);
       setMessage('Username/email and password are required.');
@@ -35,7 +56,47 @@ const Login = () => {
         setMessage('Password must be at least 6 characters.');
         return;
       }
-      const result = await signup({ email, username, password });
+      if (password !== confirmPassword) {
+        setIsError(true);
+        setMessage('Passwords do not match.');
+        return;
+      }
+      if (toNum(age) == null || !country.trim() || toNum(monthlyIncome) == null || toNum(monthlyExpenses) == null || toNum(currentCash) == null) {
+        setIsError(true);
+        setMessage('For signup, fill required profile fields (age, country, income, expenses, current cash).');
+        return;
+      }
+      const initialHoldings = holdings
+        .map((h) => ({ symbol: String(h.symbol || '').trim().toUpperCase(), qty: toNum(h.qty) }))
+        .filter((h) => h.symbol && h.qty != null && h.qty > 0);
+
+      setBusy(true);
+      const result = await signupComplete({
+        email,
+        username,
+        password,
+        profile: {
+          age: toNum(age),
+          country: country.trim(),
+          monthlyIncome: toNum(monthlyIncome),
+          monthlyExpenses: toNum(monthlyExpenses),
+          currentCash: toNum(currentCash),
+          assets: {
+            land: toNum(landValue) || 0,
+            apartments: toNum(apartmentsValue) || 0,
+            total: (toNum(landValue) || 0) + (toNum(apartmentsValue) || 0),
+          },
+          liabilities: {
+            loans: toNum(loanBalance) || 0,
+            total: toNum(loanBalance) || 0,
+          },
+          extras: {
+            medicalInsurance: medicalInsurance === 'yes',
+          },
+        },
+        initialHoldings,
+      });
+      setBusy(false);
       if (!result.ok) {
         setIsError(true);
         setMessage(result.message);
@@ -43,7 +104,9 @@ const Login = () => {
       }
       navigate('/dashboard');
     } else {
+      setBusy(true);
       const result = await login({ usernameOrEmail: username, password });
+      setBusy(false);
       if (!result.ok) {
         setIsError(true);
         setMessage(result.message);
@@ -88,6 +151,44 @@ const Login = () => {
             </div>
           )}
 
+          {mode === 'signup' && (
+            <>
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, padding: 12, marginBottom: 14, background: 'var(--bg-alt)' }}>
+                <p style={{ margin: '0 0 10px 0', fontWeight: 700 }}>Signup + Onboarding (single step)</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" placeholder="Age *" value={age} onChange={(e) => setAge(e.target.value)} />
+                  <input className="input-field" style={{ marginBottom: 0 }} placeholder="Country *" value={country} onChange={(e) => setCountry(e.target.value)} />
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Monthly income *" value={monthlyIncome} onChange={(e) => setMonthlyIncome(e.target.value)} />
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Monthly expenses *" value={monthlyExpenses} onChange={(e) => setMonthlyExpenses(e.target.value)} />
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Current cash *" value={currentCash} onChange={(e) => setCurrentCash(e.target.value)} />
+                  <div className="input-field" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', fontWeight: 700 }}>$10,000 simulated balance (auto)</div>
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Land value (optional)" value={landValue} onChange={(e) => setLandValue(e.target.value)} />
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Apartments value (optional)" value={apartmentsValue} onChange={(e) => setApartmentsValue(e.target.value)} />
+                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Loans balance (optional)" value={loanBalance} onChange={(e) => setLoanBalance(e.target.value)} />
+                  <select className="input-field" style={{ marginBottom: 0 }} value={medicalInsurance} onChange={(e) => setMedicalInsurance(e.target.value)}>
+                    <option value="no">Medical insurance: No</option>
+                    <option value="yes">Medical insurance: Yes</option>
+                  </select>
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>Optional initial holdings:</p>
+                  {holdings.map((h, idx) => (
+                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, marginBottom: 8 }}>
+                      <input className="input-field" style={{ marginBottom: 0 }} placeholder="Symbol (e.g. ABOT)" value={h.symbol} onChange={(e) => setHoldings((prev) => prev.map((x, i) => (i === idx ? { ...x, symbol: e.target.value } : x)))} />
+                      <input className="input-field" style={{ marginBottom: 0 }} type="number" placeholder="Qty" value={h.qty} onChange={(e) => setHoldings((prev) => prev.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
+                      <button type="button" className="btn-secondary" onClick={() => setHoldings((prev) => (prev.filter((_x, i) => i !== idx).length ? prev.filter((_x, i) => i !== idx) : [{ symbol: '', qty: '' }]))}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" className="btn-secondary" onClick={() => setHoldings((prev) => [...prev, { symbol: '', qty: '' }])}>
+                    <Plus size={14} /> Add holding
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
           <div className="input-group">
             <label className="input-label">{mode === 'signup' ? 'Username' : 'Username or Email'}</label>
             <div style={{ position: 'relative' }}>
@@ -108,15 +209,40 @@ const Login = () => {
             <div style={{ position: 'relative' }}>
               <Lock size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)' }} />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 className="input-field"
-                style={{ paddingLeft: '44px', borderColor: isError ? 'var(--status-negative)' : '' }}
+                style={{ paddingLeft: '44px', paddingRight: '44px', borderColor: isError ? 'var(--status-negative)' : '' }}
                 placeholder={mode === 'signup' ? 'Create password (min 6 chars)' : 'Enter password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={18} color="var(--text-muted)" /> : <Eye size={18} color="var(--text-muted)" />}
+              </button>
             </div>
           </div>
+
+          {mode === 'signup' && (
+            <div className="input-group">
+              <label className="input-label">Confirm password</label>
+              <div style={{ position: 'relative' }}>
+                <Lock size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  className="input-field"
+                  style={{ paddingLeft: '44px', paddingRight: '12px', borderColor: isError ? 'var(--status-negative)' : '' }}
+                  placeholder="Re-enter password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
 
           {message && (
             <div style={{ background: 'var(--status-negative-bg)', padding: '10px 14px', borderRadius: '6px', display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '20px' }}>
@@ -125,8 +251,8 @@ const Login = () => {
             </div>
           )}
 
-          <button type="submit" className="btn-primary" style={{ width: '100%', marginTop: message ? '0' : '8px', padding: '14px' }}>
-            {mode === 'signup' ? 'Create Account' : 'Authenticate'} <ArrowRight size={18} />
+          <button type="submit" className="btn-primary" disabled={busy} style={{ width: '100%', marginTop: message ? '0' : '8px', padding: '14px' }}>
+            {busy ? 'Working...' : (mode === 'signup' ? 'Create Account' : 'Authenticate')} <ArrowRight size={18} />
           </button>
 
           <button
@@ -138,6 +264,7 @@ const Login = () => {
               setIsError(false);
               setMessage('');
               setPassword('');
+              setConfirmPassword('');
             }}
           >
             {mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Log in'}

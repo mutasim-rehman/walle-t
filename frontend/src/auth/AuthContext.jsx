@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 const SESSION_KEY = 'wallet_session_v1';
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -46,13 +46,69 @@ async function postAuth(path, payload) {
 
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(readSession());
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function validateSession() {
+      const existing = readSession();
+      if (!existing?.id) {
+        if (!cancelled) setAuthReady(true);
+        return;
+      }
+      const bases = API_BASE === API_FALLBACK_BASE ? [API_BASE] : [API_BASE, API_FALLBACK_BASE];
+      let valid = false;
+      for (const base of bases) {
+        try {
+          const res = await fetch(`${base}/auth/session/${encodeURIComponent(existing.id)}`);
+          const data = await res.json();
+          if (res.ok && data?.ok && data?.valid) {
+            valid = true;
+            break;
+          }
+        } catch {
+          // try next base
+        }
+      }
+      if (!cancelled) {
+        if (!valid) {
+          writeSession(null);
+          setCurrentUser(null);
+        } else {
+          setCurrentUser(existing);
+        }
+        setAuthReady(true);
+      }
+    }
+    validateSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const value = useMemo(
     () => ({
       currentUser,
+      authReady,
       isAuthenticated: Boolean(currentUser),
       async signup({ email, username, password }) {
         const result = await postAuth('/auth/signup', { email, username, password });
+        if (!result.ok) {
+          return { ok: false, message: result.message || 'Signup failed.' };
+        }
+        const sessionUser = result.user;
+        writeSession(sessionUser);
+        setCurrentUser(sessionUser);
+        return { ok: true };
+      },
+      async signupComplete({ email, username, password, profile, initialHoldings }) {
+        const result = await postAuth('/auth/signup-complete', {
+          email,
+          username,
+          password,
+          profile,
+          initialHoldings,
+        });
         if (!result.ok) {
           return { ok: false, message: result.message || 'Signup failed.' };
         }
@@ -76,7 +132,7 @@ export function AuthProvider({ children }) {
         setCurrentUser(null);
       },
     }),
-    [currentUser]
+    [authReady, currentUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
