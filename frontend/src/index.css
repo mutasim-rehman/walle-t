@@ -216,3 +216,35 @@ h1, h2, h3, h4, h5, h6 {
 .clickable {
   cursor: pointer;
 }
+
+.advisor-markdown {
+  color: #0f172a;
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+
+.advisor-markdown > * + * {
+  margin-top: 0.75rem;
+}
+
+.advisor-markdown h1,
+.advisor-markdown h2,
+.advisor-markdown h3,
+.advisor-markdown h4 {
+  font-size: 1rem;
+  margin-top: 1rem;
+  margin-bottom: 0.35rem;
+}
+
+.advisor-markdown p {
+  margin: 0.35rem 0;
+}
+
+.advisor-markdown ul,
+.advisor-markdown ol {
+  margin: 0.5rem 0 0.5rem 1.1rem;
+}
+
+.advisor-markdown li + li {
+  margin-top: 0.3rem;
+}

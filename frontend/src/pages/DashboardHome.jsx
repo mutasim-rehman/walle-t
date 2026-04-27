@@ -76,6 +76,10 @@ export default function DashboardHome() {
           <h3 style={{ marginBottom: 6 }}>Risk Analysis</h3>
           <p style={{ color: 'var(--text-muted)' }}>Exposure mix, concentration and shocks.</p>
         </Link>
+        <Link to="/advisor" className="finance-card" style={{ padding: 18, textDecoration: 'none', color: 'inherit' }}>
+          <h3 style={{ marginBottom: 6 }}>Advisor Chatbot</h3>
+          <p style={{ color: 'var(--text-muted)' }}>Ask Gemini for advice based on your portfolio and assets/liabilities.</p>
+        </Link>
       </div>
     </AppShell>
   );

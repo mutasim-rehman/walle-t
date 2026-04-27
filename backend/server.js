@@ -23,6 +23,10 @@ app.use(express.json());
 const rateWindowMs = Number(process.env.API_RATE_WINDOW_MS || 60_000);
 const rateMax = Number(process.env.API_RATE_MAX || 240);
 const rateBuckets = new Map();
+const advisorPromptBuckets = new Map();
+const ADVISOR_MIN_INTERVAL_MS = 5 * 60 * 1000;
+const ADVISOR_MAX_IN_WINDOW = 3;
+const ADVISOR_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 app.use("/api", (req, res, next) => {
   const key = `${req.ip || "unknown"}:${req.path}`;
@@ -51,6 +55,50 @@ app.use("/api", (req, res, next) => {
   });
   return next();
 });
+
+function formatDurationMs(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function checkAndConsumeAdvisorPrompt(userId) {
+  const key = String(userId || "").trim();
+  const now = Date.now();
+  const earliestAllowed = now - ADVISOR_WINDOW_MS;
+  const promptTimes = (advisorPromptBuckets.get(key) || []).filter((ts) => ts >= earliestAllowed);
+
+  const lastPromptAt = promptTimes[promptTimes.length - 1];
+  if (lastPromptAt && now - lastPromptAt < ADVISOR_MIN_INTERVAL_MS) {
+    const retryAfterMs = ADVISOR_MIN_INTERVAL_MS - (now - lastPromptAt);
+    return {
+      allowed: false,
+      retryAfterMs,
+      retryAfterSec: Math.ceil(retryAfterMs / 1000),
+      message:
+        "Advisor is locked right now. You can send only one prompt every 5 minutes.",
+    };
+  }
+
+  if (promptTimes.length >= ADVISOR_MAX_IN_WINDOW) {
+    const retryAfterMs = ADVISOR_WINDOW_MS - (now - promptTimes[0]);
+    return {
+      allowed: false,
+      retryAfterMs,
+      retryAfterSec: Math.ceil(retryAfterMs / 1000),
+      message:
+        "Advisor limit reached. You can send max 3 prompts in a 6-hour window.",
+    };
+  }
+
+  promptTimes.push(now);
+  advisorPromptBuckets.set(key, promptTimes);
+  return { allowed: true };
+}
 
 function ensureJsonFile(filePath, fallbackJson) {
   const dir = path.dirname(filePath);
@@ -175,6 +223,95 @@ function buildPortfolioSummary(activities) {
     totalBudget,
     symbols,
   };
+}
+
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function moneyLabel(value) {
+  const n = toFiniteNumber(value);
+  if (n == null) return "n/a";
+  return `$${n.toFixed(2)}`;
+}
+
+function sumNumericValues(obj, { skipKeys = [] } = {}) {
+  if (!obj || typeof obj !== "object") return 0;
+  const skipped = new Set(skipKeys);
+  return Object.entries(obj).reduce((sum, [key, value]) => {
+    if (skipped.has(key)) return sum;
+    const n = toFiniteNumber(value);
+    return n == null ? sum : sum + n;
+  }, 0);
+}
+
+function buildFinancialProfileSummary(profile) {
+  if (!profile || typeof profile !== "object") {
+    return {
+      assetsTotal: 0,
+      liabilitiesTotal: 0,
+      summary: "No profile found. Ask one follow-up about income, expenses, assets, liabilities, and risk tolerance.",
+    };
+  }
+
+  const assetsTotalRaw =
+    toFiniteNumber(profile.assets?.total) ?? sumNumericValues(profile.assets, { skipKeys: ["total"] });
+  const liabilitiesTotalRaw =
+    toFiniteNumber(profile.liabilities?.total) ??
+    sumNumericValues(profile.liabilities, { skipKeys: ["total"] });
+
+  const assetsTotal = Math.max(0, assetsTotalRaw || 0);
+  const liabilitiesTotal = Math.max(0, liabilitiesTotalRaw || 0);
+
+  return {
+    assetsTotal,
+    liabilitiesTotal,
+    summary: [
+      `Age: ${profile.age ?? "n/a"}`,
+      `Country: ${profile.country || "n/a"}`,
+      `Monthly income: ${moneyLabel(profile.monthlyIncome)}`,
+      `Monthly expenses: ${moneyLabel(profile.monthlyExpenses)}`,
+      `Current cash (outside simulated ledger): ${moneyLabel(profile.currentCash)}`,
+      `Other assets total: ${moneyLabel(assetsTotal)}`,
+      `Other liabilities total: ${moneyLabel(liabilitiesTotal)}`,
+      `Net assets excluding portfolio ledger: ${moneyLabel(assetsTotal - liabilitiesTotal)}`,
+    ].join("\n"),
+  };
+}
+
+function buildLedgerSummary(transactions, ledger) {
+  const tx = Array.isArray(transactions) ? transactions : [];
+  const holdings = Array.isArray(ledger?.holdings) ? ledger.holdings : [];
+  const cash = toFiniteNumber(ledger?.cash) || 0;
+
+  const latest = tx
+    .slice(0, 8)
+    .map((entry) => {
+      const date = entry?.createdAt ? String(entry.createdAt).slice(0, 10) : "n/a";
+      const type = String(entry?.type || "UNKNOWN").toUpperCase();
+      const symbol = String(entry?.symbol || "-").trim() || "-";
+      const qty = toFiniteNumber(entry?.qty);
+      const amount = toFiniteNumber(entry?.amount);
+      return `- ${date} ${type} ${symbol} qty=${qty == null ? "-" : qty} amount=${
+        amount == null ? "-" : amount.toFixed(2)
+      }`;
+    })
+    .join("\n");
+
+  const holdingLines =
+    holdings.length === 0
+      ? "No active holdings."
+      : holdings.map((h) => `- ${h.symbol}: ${Number(h.qty).toFixed(4)} units`).join("\n");
+
+  return [
+    `Ledger cash: ${moneyLabel(cash)}`,
+    `Holdings count: ${holdings.length}`,
+    "Current holdings:",
+    holdingLines,
+    `Recent transactions (${Math.min(8, tx.length)} shown):`,
+    latest || "No transactions recorded.",
+  ].join("\n");
 }
 
 function extractGroundingSources(response) {
@@ -1368,33 +1505,79 @@ app.post("/api/advisor", async (req, res) => {
     return res.status(404).json({ ok: false, message: "User not found." });
   }
 
+  const advisorQuota = checkAndConsumeAdvisorPrompt(user.id);
+  if (!advisorQuota.allowed) {
+    return res.status(429).json({
+      ok: false,
+      message: `${advisorQuota.message} Try again in ${formatDurationMs(advisorQuota.retryAfterMs)}.`,
+      retryAfterSec: advisorQuota.retryAfterSec,
+      lock: {
+        minIntervalMs: ADVISOR_MIN_INTERVAL_MS,
+        maxPrompts: ADVISOR_MAX_IN_WINDOW,
+        windowMs: ADVISOR_WINDOW_MS,
+      },
+    });
+  }
+
   const activities = readActivities()
     .filter((activity) => activity.userId === user.id)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const portfolio = buildPortfolioSummary(activities);
+
+  let profile = null;
+  try {
+    profile = await readProfileFromSheet(user.id);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to read profile from Google Sheet.",
+      details: String(error.message || error),
+    });
+  }
+
+  let transactions = [];
+  try {
+    transactions = await readTransactionsForUser(user.id, { limit: 400 });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to read transactions from Google Sheet.",
+      details: String(error.message || error),
+    });
+  }
+
+  const ledger = computeLedgerState(transactions);
+  const financialProfile = buildFinancialProfileSummary(profile);
+  const ledgerSummary = buildLedgerSummary(transactions, ledger);
   const today = new Date().toISOString().slice(0, 10);
   const prompt = [
-    "You are Walle-T's portfolio advisor assistant.",
-    "Your job is to advise the user based on their saved portfolio activity and current affairs.",
+    "You are Walle-T's financial advisor chatbot for an educational trading simulator.",
+    "Give practical financial guidance based on this user's current portfolio, transactions, and balance sheet.",
     "Use current affairs when relevant by grounding with Google Search.",
-    "Keep the answer practical, concise, and tailored to the user's symbols.",
-    "Do not claim certainty or guaranteed returns.",
+    "Do not claim certainty or guaranteed returns, and clearly label assumptions.",
     "This is educational analysis, not professional financial advice.",
     "",
     `Date: ${today}`,
     `User: ${user.username} (${user.email})`,
     "",
-    "Saved portfolio/activity context:",
+    "Saved activity context:",
     portfolio.summary,
+    "",
+    "Financial profile context:",
+    financialProfile.summary,
+    "",
+    "Current simulated portfolio + transactions context:",
+    ledgerSummary,
     "",
     "User question:",
     String(message).trim(),
     "",
     "Answer format:",
-    "1. Short view",
-    "2. Portfolio-specific observations",
-    "3. Current-affairs impact",
-    "4. Suggested next steps",
+    "1. Short answer",
+    "2. Portfolio observations (holdings, cashflow, concentration)",
+    "3. Assets/liabilities implications",
+    "4. Current-affairs impact",
+    "5. Concrete next actions (3-5 bullets)",
   ].join("\n");
 
   try {
@@ -1412,6 +1595,13 @@ app.post("/api/advisor", async (req, res) => {
       reply: String(response?.text || "").trim(),
       model: GEMINI_MODEL,
       portfolio,
+      profileComplete: isProfileComplete(profile),
+      financialProfile: {
+        assetsTotal: financialProfile.assetsTotal,
+        liabilitiesTotal: financialProfile.liabilitiesTotal,
+        cash: ledger.cash,
+        holdingsCount: ledger.holdings.length,
+      },
       sources: extractGroundingSources(response),
     });
   } catch (error) {

@@ -24,3 +24,7 @@ extracted_text.txt
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Test Files
+test_gemini.py
+test_grok.py

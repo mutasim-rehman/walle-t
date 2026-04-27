@@ -13,6 +13,7 @@ const PortfolioPage = lazy(() => import('./pages/PortfolioPage'));
 const RiskPage = lazy(() => import('./pages/RiskPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const AdvisorPage = lazy(() => import('./pages/AdvisorPage'));
 const CompanyPrediction = lazy(() => import('./pages/CompanyPrediction'));
 
 function App() {
@@ -102,6 +103,14 @@ function App() {
               element={(
                 <ProtectedRoute>
                   <SettingsPage />
+                </ProtectedRoute>
+              )}
+            />
+            <Route
+              path="/advisor"
+              element={(
+                <ProtectedRoute>
+                  <AdvisorPage />
                 </ProtectedRoute>
               )}
             />

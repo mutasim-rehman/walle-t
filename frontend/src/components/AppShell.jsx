@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BarChart3, CircleUser, Gauge, Home, LogOut, Settings, ShoppingCart, TrendingUp, Wallet } from 'lucide-react';
+import { BarChart3, CircleUser, Gauge, Home, LogOut, MessageSquare, Settings, ShoppingCart, TrendingUp, Wallet } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 
 const NAV_ITEMS = [
@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/market/forex', label: 'Forex', icon: BarChart3 },
   { to: '/market/options', label: 'Options', icon: ShoppingCart },
   { to: '/portfolio', label: 'Portfolio', icon: Wallet },
+  { to: '/advisor', label: 'Advisor Chatbot', icon: MessageSquare },
   { to: '/risk', label: 'Risk Analysis', icon: Gauge },
   { to: '/profile', label: 'Profile', icon: CircleUser },
   { to: '/settings', label: 'Settings', icon: Settings },
