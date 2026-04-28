@@ -12,6 +12,8 @@ export default function ForexMarketPage() {
   const [series, setSeries] = useState([]);
   const [side, setSide] = useState('BUY');
   const [units, setUnits] = useState('1000');
+  const [source, setSource] = useState('');
+  const [isFallback, setIsFallback] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
@@ -20,9 +22,17 @@ export default function ForexMarketPage() {
     async function load() {
       try {
         const data = await apiGet(`/market/forex/${pair}`);
-        if (mounted) setSeries(data.series || []);
+        if (mounted) {
+          setSeries(data.series || []);
+          setSource(data.source || '');
+          setIsFallback(Boolean(data.providerFallback));
+        }
       } catch {
-        if (mounted) setSeries([]);
+        if (mounted) {
+          setSeries([]);
+          setSource('');
+          setIsFallback(false);
+        }
       }
     }
     load();
@@ -44,14 +54,14 @@ export default function ForexMarketPage() {
         side,
         units: Number(units),
       });
-      setMsg(`Executed ${data.trade.side} ${data.trade.units} ${data.trade.pair} @ ${Number(data.trade.price).toFixed(5)}`);
+      setMsg(`Executed ${data.trade.side} ${data.trade.units} ${data.trade.pair} @ ${Number(data.trade.price).toFixed(5)} (${data.trade.source || 'quote'})`);
     } catch (error) {
       setErr(error.message);
     }
   }
 
   return (
-    <AppShell title="Forex Market" subtitle="Live synthetic pair feed and simulated execution.">
+    <AppShell title="Forex Market" subtitle="Live provider feed with fallback when provider is unavailable.">
       <div className="finance-card" style={{ padding: 16 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {PAIRS.map((p) => (
@@ -61,6 +71,11 @@ export default function ForexMarketPage() {
       </div>
       <div className="finance-card" style={{ marginTop: 12, padding: 16 }}>
         <h3 style={{ marginBottom: 8 }}>{pair} Live Chart</h3>
+        {source ? (
+          <p style={{ color: isFallback ? 'var(--status-negative)' : 'var(--status-positive)', marginBottom: 8, fontSize: '0.85rem' }}>
+            Source: {source}{isFallback ? ' (fallback mode)' : ''}
+          </p>
+        ) : null}
         <SimpleLineChart series={series} color="#0ea5e9" />
       </div>
       <div className="finance-card" style={{ marginTop: 12, padding: 16 }}>

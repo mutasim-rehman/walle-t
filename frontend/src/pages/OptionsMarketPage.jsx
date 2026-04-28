@@ -12,6 +12,8 @@ export default function OptionsMarketPage() {
   const [selected, setSelected] = useState(null);
   const [side, setSide] = useState('BUY');
   const [contracts, setContracts] = useState('1');
+  const [source, setSource] = useState('');
+  const [isFallback, setIsFallback] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
@@ -24,12 +26,16 @@ export default function OptionsMarketPage() {
           setChain(data.chain || []);
           setSeries(data.series || []);
           setSelected((data.chain || [])[0] || null);
+          setSource(data.source || '');
+          setIsFallback(Boolean(data.providerFallback));
         }
       } catch {
         if (mounted) {
           setChain([]);
           setSeries([]);
           setSelected(null);
+          setSource('');
+          setIsFallback(false);
         }
       }
     }
@@ -62,14 +68,14 @@ export default function OptionsMarketPage() {
         contracts: Number(contracts),
         premium,
       });
-      setMsg(`Executed ${data.trade.side} ${data.trade.contracts} contracts ${symbol} @ premium ${Number(data.trade.premium).toFixed(2)}`);
+      setMsg(`Executed ${data.trade.side} ${data.trade.contracts} contracts ${symbol} @ premium ${Number(data.trade.premium).toFixed(2)} (${data.trade.source || 'quote'})`);
     } catch (error) {
       setErr(error.message);
     }
   }
 
   return (
-    <AppShell title="Options Market" subtitle="Contract chain and premium simulation.">
+    <AppShell title="Options Market" subtitle="Provider-backed chain and premium execution with fallback mode.">
       <div className="finance-card" style={{ padding: 16 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input className="input-field" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} style={{ marginBottom: 0, maxWidth: 220 }} />
@@ -79,6 +85,11 @@ export default function OptionsMarketPage() {
 
       <div className="finance-card" style={{ marginTop: 12, padding: 16 }}>
         <h3 style={{ marginBottom: 8 }}>{symbol} Underlying Trend</h3>
+        {source ? (
+          <p style={{ color: isFallback ? 'var(--status-negative)' : 'var(--status-positive)', marginBottom: 8, fontSize: '0.85rem' }}>
+            Source: {source}{isFallback ? ' (fallback mode)' : ''}
+          </p>
+        ) : null}
         <SimpleLineChart series={series} color="#8b5cf6" />
       </div>
 

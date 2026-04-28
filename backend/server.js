@@ -1774,7 +1774,12 @@ app.get("/api/portfolio/:userId", async (req, res) => {
   const userId = String(req.params.userId || "").trim();
   if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
 
-  const profile = getProfileByUserId(userId);
+  let profile = null;
+  try {
+    profile = await readProfileFromSheet(userId);
+  } catch {
+    profile = null;
+  }
   let transactions = [];
   try {
     transactions = await readTransactionsForUser(userId, { limit: 300 });
@@ -1895,6 +1900,148 @@ function generateSyntheticSeries(seedKey, { points = 120, start = 100, volatilit
   return out;
 }
 
+function parseForexPair(pair) {
+  const normalized = String(pair || "").trim().toUpperCase();
+  if (!/^[A-Z]{6}$/.test(normalized)) return null;
+  return {
+    pair: normalized,
+    base: normalized.slice(0, 3),
+    quote: normalized.slice(3),
+  };
+}
+
+async function fetchForexFromProvider(pair) {
+  const parsed = parseForexPair(pair);
+  if (!parsed) throw new Error("Invalid forex pair");
+
+  const end = new Date();
+  const start = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
+  const rangeUrl = `https://api.frankfurter.app/${startStr}..${endStr}?from=${parsed.base}&to=${parsed.quote}`;
+  const latestUrl = `https://api.frankfurter.app/latest?from=${parsed.base}&to=${parsed.quote}`;
+
+  const [rangeRes, latestRes] = await Promise.all([fetch(rangeUrl), fetch(latestUrl)]);
+  if (!rangeRes.ok || !latestRes.ok) {
+    throw new Error(`Forex provider failed (range=${rangeRes.status}, latest=${latestRes.status})`);
+  }
+
+  const rangeData = await rangeRes.json();
+  const latestData = await latestRes.json();
+  const rates = rangeData?.rates && typeof rangeData.rates === "object" ? rangeData.rates : {};
+  const series = Object.entries(rates)
+    .map(([date, values]) => {
+      const value = Number(values?.[parsed.quote]);
+      return { time: `${date}T00:00:00.000Z`, value };
+    })
+    .filter((p) => Number.isFinite(p.value))
+    .sort((a, b) => new Date(a.time) - new Date(b.time));
+
+  const latestValue = Number(latestData?.rates?.[parsed.quote]);
+  if (!Number.isFinite(latestValue) || series.length === 0) {
+    throw new Error("Forex provider returned no usable quote/series");
+  }
+
+  return {
+    pair: parsed.pair,
+    latest: { time: new Date().toISOString(), value: latestValue },
+    series,
+    source: "frankfurter",
+  };
+}
+
+async function fetchOptionsFromProvider(symbol) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym) throw new Error("symbol is required");
+
+  const baseUrl = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(sym)}`;
+  const headers = { "user-agent": "Mozilla/5.0" };
+  const mainRes = await fetch(baseUrl, { headers });
+  if (!mainRes.ok) throw new Error(`Options provider failed (${mainRes.status})`);
+  const main = await mainRes.json();
+  const result = main?.optionChain?.result?.[0];
+  if (!result) throw new Error("Options provider returned empty result");
+
+  const expirationDates = Array.isArray(result.expirationDates) ? result.expirationDates.slice(0, 3) : [];
+  const snapshots = [{ data: result, expiryTs: result?.options?.[0]?.expirationDate || expirationDates[0] }];
+  for (const ts of expirationDates.slice(1)) {
+    try {
+      const r = await fetch(`${baseUrl}?date=${ts}`, { headers });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const d = j?.optionChain?.result?.[0];
+      if (d) snapshots.push({ data: d, expiryTs: ts });
+    } catch {
+      // ignore non-critical expiry failures
+    }
+  }
+
+  const chain = [];
+  for (const snap of snapshots) {
+    const options = snap.data?.options?.[0] || {};
+    const calls = Array.isArray(options.calls) ? options.calls : [];
+    const puts = Array.isArray(options.puts) ? options.puts : [];
+    const byStrike = new Map();
+    for (const c of calls) {
+      const strike = Number(c?.strike);
+      if (!Number.isFinite(strike)) continue;
+      byStrike.set(strike, {
+        callPremium: Number(c?.lastPrice ?? c?.bid ?? c?.ask),
+        expiry: new Date((Number(c?.expiration) || snap.expiryTs) * 1000).toISOString().slice(0, 10),
+      });
+    }
+    for (const p of puts) {
+      const strike = Number(p?.strike);
+      if (!Number.isFinite(strike)) continue;
+      const prev = byStrike.get(strike) || {
+        expiry: new Date((Number(p?.expiration) || snap.expiryTs) * 1000).toISOString().slice(0, 10),
+      };
+      prev.putPremium = Number(p?.lastPrice ?? p?.bid ?? p?.ask);
+      byStrike.set(strike, prev);
+    }
+    for (const [strike, entry] of byStrike.entries()) {
+      if (!Number.isFinite(entry.callPremium) && !Number.isFinite(entry.putPremium)) continue;
+      chain.push({
+        symbol: sym,
+        expiry: entry.expiry,
+        strike: Number(strike.toFixed(2)),
+        callPremium: Number.isFinite(entry.callPremium) ? Number(entry.callPremium.toFixed(2)) : null,
+        putPremium: Number.isFinite(entry.putPremium) ? Number(entry.putPremium.toFixed(2)) : null,
+      });
+    }
+  }
+
+  const quote = result?.quote || {};
+  const spot = Number(
+    quote?.regularMarketPrice ??
+      quote?.postMarketPrice ??
+      quote?.bid ??
+      quote?.ask
+  );
+  if (!Number.isFinite(spot) || chain.length === 0) {
+    throw new Error("Options provider returned no usable chain");
+  }
+
+  const series = generateSyntheticSeries(`underlying:${sym}`, {
+    points: 120,
+    start: spot,
+    volatility: 0.0032,
+  });
+
+  return {
+    symbol: sym,
+    spot: Number(spot.toFixed(2)),
+    chain: chain
+      .sort((a, b) => {
+        if (a.expiry !== b.expiry) return a.expiry.localeCompare(b.expiry);
+        return a.strike - b.strike;
+      })
+      .slice(0, 300),
+    series,
+    source: "yahoo",
+  };
+}
+
 async function priceHoldings(holdings) {
   const priced = [];
   let total = 0;
@@ -1945,7 +2092,16 @@ app.post("/api/forecast", async (req, res) => {
   const id = String(userId || "").trim();
   if (!id) return res.status(400).json({ ok: false, message: "userId is required." });
 
-  const profile = getProfileByUserId(id);
+  let profile = null;
+  try {
+    profile = await readProfileFromSheet(id);
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: "Failed to read profile from Google Sheet.",
+      details: String(error.message || error),
+    });
+  }
   if (!isProfileComplete(profile)) {
     return res.status(400).json({ ok: false, message: "Profile is incomplete. Complete onboarding first." });
   }
@@ -2114,54 +2270,73 @@ app.post("/api/settings/:userId", async (req, res) => {
   return res.json({ ok: true, settings: nextProfile.extras.settings });
 });
 
-app.get("/api/market/forex/:pair", (req, res) => {
+app.get("/api/market/forex/:pair", async (req, res) => {
   const pair = String(req.params.pair || "").trim().toUpperCase();
   if (!/^[A-Z]{6}$/.test(pair)) {
     return res.status(400).json({ ok: false, message: "pair must be 6 letters, e.g. EURUSD" });
   }
-  const baseMap = {
-    EURUSD: 1.08,
-    GBPUSD: 1.27,
-    USDJPY: 154.2,
-    AUDUSD: 0.66,
-    USDCAD: 1.36,
-    USDCHF: 0.91,
-  };
-  const start = baseMap[pair] || 1 + (hashString(pair) % 50) / 100;
-  const series = generateSyntheticSeries(`forex:${pair}`, { points: 160, start, volatility: 0.0015 });
-  return res.json({ ok: true, pair, series, latest: series[series.length - 1] });
+  try {
+    const data = await fetchForexFromProvider(pair);
+    return res.json({ ok: true, ...data, providerFallback: false });
+  } catch (error) {
+    const start = 1 + (hashString(pair) % 50) / 100;
+    const series = generateSyntheticSeries(`forex:${pair}`, { points: 160, start, volatility: 0.0015 });
+    return res.json({
+      ok: true,
+      pair,
+      series,
+      latest: series[series.length - 1],
+      source: "synthetic-fallback",
+      providerFallback: true,
+      details: String(error.message || error),
+    });
+  }
 });
 
-app.get("/api/market/options/:symbol", (req, res) => {
+app.get("/api/market/options/:symbol", async (req, res) => {
   const symbol = String(req.params.symbol || "").trim().toUpperCase();
   if (!symbol) return res.status(400).json({ ok: false, message: "symbol is required." });
-  const seed = hashString(symbol);
-  const spot = 80 + (seed % 400) / 5;
-  const expiries = [14, 30, 60].map((d) => {
-    const dt = new Date();
-    dt.setDate(dt.getDate() + d);
-    return dt.toISOString().slice(0, 10);
-  });
-  const strikes = [-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15].map((p) => Number((spot * (1 + p)).toFixed(2)));
-  const chain = [];
-  for (const expiry of expiries) {
-    for (const strike of strikes) {
-      const moneyness = Math.abs((strike - spot) / spot);
-      const timeValue = Math.max(0.5, (60 - Math.abs(new Date(expiry) - Date.now()) / (1000 * 60 * 60 * 24)) * 0.03);
-      const basePremium = Math.max(0.2, spot * (0.015 + moneyness * 0.2) + timeValue);
-      const callPremium = Number(basePremium.toFixed(2));
-      const putPremium = Number((basePremium * (0.95 + moneyness)).toFixed(2));
-      chain.push({
-        symbol,
-        expiry,
-        strike,
-        callPremium,
-        putPremium,
-      });
+  try {
+    const data = await fetchOptionsFromProvider(symbol);
+    return res.json({ ok: true, ...data, providerFallback: false });
+  } catch (error) {
+    const seed = hashString(symbol);
+    const spot = 80 + (seed % 400) / 5;
+    const expiries = [14, 30, 60].map((d) => {
+      const dt = new Date();
+      dt.setDate(dt.getDate() + d);
+      return dt.toISOString().slice(0, 10);
+    });
+    const strikes = [-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15].map((p) => Number((spot * (1 + p)).toFixed(2)));
+    const chain = [];
+    for (const expiry of expiries) {
+      for (const strike of strikes) {
+        const moneyness = Math.abs((strike - spot) / spot);
+        const timeValue = Math.max(0.5, (60 - Math.abs(new Date(expiry) - Date.now()) / (1000 * 60 * 60 * 24)) * 0.03);
+        const basePremium = Math.max(0.2, spot * (0.015 + moneyness * 0.2) + timeValue);
+        const callPremium = Number(basePremium.toFixed(2));
+        const putPremium = Number((basePremium * (0.95 + moneyness)).toFixed(2));
+        chain.push({
+          symbol,
+          expiry,
+          strike,
+          callPremium,
+          putPremium,
+        });
+      }
     }
+    const series = generateSyntheticSeries(`options:${symbol}`, { points: 140, start: spot, volatility: 0.0035 });
+    return res.json({
+      ok: true,
+      symbol,
+      spot: Number(spot.toFixed(2)),
+      chain,
+      series,
+      source: "synthetic-fallback",
+      providerFallback: true,
+      details: String(error.message || error),
+    });
   }
-  const series = generateSyntheticSeries(`options:${symbol}`, { points: 140, start: spot, volatility: 0.0035 });
-  return res.json({ ok: true, symbol, spot: Number(spot.toFixed(2)), chain, series });
 });
 
 app.post("/api/trade/forex", async (req, res) => {
@@ -2181,8 +2356,23 @@ app.post("/api/trade/forex", async (req, res) => {
     return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
   }
   const ledger = computeLedgerState(transactions);
-  const quotes = generateSyntheticSeries(`forex:${asset}`, { points: 2, start: 1 + (hashString(asset) % 50) / 100, volatility: 0.0015 });
-  const mid = Number(quotes[quotes.length - 1].value);
+  let mid = null;
+  let source = "synthetic-fallback";
+  try {
+    const quote = await fetchForexFromProvider(asset);
+    mid = Number(quote?.latest?.value);
+    source = quote?.source || "frankfurter";
+  } catch {
+    const quotes = generateSyntheticSeries(`forex:${asset}`, {
+      points: 2,
+      start: 1 + (hashString(asset) % 50) / 100,
+      volatility: 0.0015,
+    });
+    mid = Number(quotes[quotes.length - 1].value);
+  }
+  if (!Number.isFinite(mid)) {
+    return res.status(502).json({ ok: false, message: "Failed to fetch executable forex quote." });
+  }
   const spreadBps = 8;
   const price = direction === "BUY" ? mid * (1 + spreadBps / 10000) : mid * (1 - spreadBps / 10000);
   const amount = price * qty;
@@ -2203,13 +2393,16 @@ app.post("/api/trade/forex", async (req, res) => {
       price,
       amount,
       cashAfter,
-      note: "Synthetic forex execution.",
-      metaJson: { assetClass: "forex", side: direction, spreadBps },
+      note: `Forex execution (${source}).`,
+      metaJson: { assetClass: "forex", side: direction, spreadBps, source },
     });
   } catch (error) {
     return res.status(500).json({ ok: false, message: "Failed to persist forex trade.", details: String(error.message || error) });
   }
-  return res.status(201).json({ ok: true, trade: { userId: id, pair: asset, side: direction, units: qty, price, amount, cashAfter } });
+  return res.status(201).json({
+    ok: true,
+    trade: { userId: id, pair: asset, side: direction, units: qty, price, amount, cashAfter, source },
+  });
 });
 
 app.post("/api/trade/options", async (req, res) => {
@@ -2226,7 +2419,28 @@ app.post("/api/trade/options", async (req, res) => {
     return res.status(400).json({ ok: false, message: "userId, symbol, side, contractType, strike, expiry, contracts are required." });
   }
 
-  const computedPremium = Number.isFinite(premiumNum) && premiumNum > 0 ? premiumNum : Math.max(0.5, strikeNum * 0.02);
+  let computedPremium = Number.isFinite(premiumNum) && premiumNum > 0 ? premiumNum : null;
+  let source = "synthetic-fallback";
+  try {
+    const snapshot = await fetchOptionsFromProvider(sym);
+    const match = snapshot.chain.find(
+      (entry) =>
+        String(entry.expiry) === String(expiry) &&
+        Number(entry.strike) === Number(strikeNum)
+    );
+    if (match) {
+      const premiumFromChain = optType === "CALL" ? match.callPremium : match.putPremium;
+      if (Number.isFinite(Number(premiumFromChain)) && Number(premiumFromChain) > 0) {
+        computedPremium = Number(premiumFromChain);
+        source = snapshot.source || "yahoo";
+      }
+    }
+  } catch {
+    // fallback continues
+  }
+  if (!Number.isFinite(computedPremium) || computedPremium <= 0) {
+    computedPremium = Math.max(0.5, strikeNum * 0.02);
+  }
   let transactions = [];
   try {
     transactions = await readTransactionsForUser(id, { limit: 800 });
@@ -2251,15 +2465,35 @@ app.post("/api/trade/options", async (req, res) => {
       price: computedPremium,
       amount,
       cashAfter,
-      note: "Synthetic option premium execution.",
-      metaJson: { assetClass: "option", underlying: sym, expiry, strike: strikeNum, optionType: optType, lotSize },
+      note: `Option premium execution (${source}).`,
+      metaJson: {
+        assetClass: "option",
+        underlying: sym,
+        expiry,
+        strike: strikeNum,
+        optionType: optType,
+        lotSize,
+        source,
+      },
     });
   } catch (error) {
     return res.status(500).json({ ok: false, message: "Failed to persist options trade.", details: String(error.message || error) });
   }
   return res.status(201).json({
     ok: true,
-    trade: { userId: id, symbol: sym, side: direction, contractType: optType, strike: strikeNum, expiry, contracts: qty, premium: computedPremium, amount, cashAfter },
+    trade: {
+      userId: id,
+      symbol: sym,
+      side: direction,
+      contractType: optType,
+      strike: strikeNum,
+      expiry,
+      contracts: qty,
+      premium: computedPremium,
+      amount,
+      cashAfter,
+      source,
+    },
   });
 });
 

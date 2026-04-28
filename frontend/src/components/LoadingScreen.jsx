@@ -2,6 +2,11 @@ import React, { useRef, useMemo } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrthographicCamera, Box, Edges } from '@react-three/drei';
 
+function seededValue(seed) {
+  const x = Math.sin(seed * 999.91) * 10000;
+  return x - Math.floor(x);
+}
+
 const BlockChart = () => {
   const groupRef = useRef();
 
@@ -9,9 +14,9 @@ const BlockChart = () => {
   const bars = useMemo(() => {
     return Array.from({ length: 9 }).map((_, i) => ({
       x: (i - 4) * 1.5,
-      targetHeight: 1 + Math.random() * 4,
-      speed: 1 + Math.random() * 2,
-      offset: Math.random() * Math.PI * 2,
+      targetHeight: 1 + seededValue(i + 1) * 4,
+      speed: 1 + seededValue(i + 11) * 2,
+      offset: seededValue(i + 21) * Math.PI * 2,
     }));
   }, []);
 

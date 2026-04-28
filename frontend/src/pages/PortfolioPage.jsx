@@ -26,8 +26,21 @@ export default function PortfolioPage() {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    load();
+    if (!currentUser?.id) return;
+    let ignore = false;
+    apiGet(`/portfolio/${encodeURIComponent(currentUser.id)}`)
+      .then((res) => {
+        if (ignore) return;
+        setData(res);
+        setError('');
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(err.message);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [currentUser?.id]);
 
   return (
