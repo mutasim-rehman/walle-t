@@ -9,7 +9,15 @@ const { google } = require("googleapis");
 const { GoogleGenAI } = require("@google/genai");
 const nodemailer = require("nodemailer");
 
-dotenv.config({ path: path.resolve(__dirname, "..", ".env") });
+const projectRoot = path.resolve(__dirname, "..");
+const dotenvCandidates = [".env", "env"];
+for (const candidate of dotenvCandidates) {
+  const fullPath = path.join(projectRoot, candidate);
+  if (fs.existsSync(fullPath)) {
+    dotenv.config({ path: fullPath });
+    break;
+  }
+}
 
 const PORT = Number(process.env.BACKEND_PORT || 4001);
 const ACTIVITIES_PATH = path.resolve(__dirname, "data", "activities.json");
@@ -356,6 +364,15 @@ function classifyGeminiError(error) {
     status: 502,
     message: "Failed to get advisor response from Gemini.",
   };
+}
+
+function isGeminiQuotaError(error) {
+  const message = String(error?.message || error || "");
+  return (
+    message.includes("RESOURCE_EXHAUSTED") ||
+    message.includes('"code":429') ||
+    message.toLowerCase().includes("quota")
+  );
 }
 
 function getGoogleConfig() {
@@ -1581,14 +1598,27 @@ app.post("/api/advisor", async (req, res) => {
   ].join("\n");
 
   try {
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        temperature: 0.3,
-        tools: [{ googleSearch: {} }],
-      },
-    });
+    let response = null;
+    try {
+      response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          temperature: 0.3,
+          tools: [{ googleSearch: {} }],
+        },
+      });
+    } catch (searchError) {
+      if (!isGeminiQuotaError(searchError)) throw searchError;
+      // Fallback: if search-tool quota is exhausted, still try a plain response.
+      response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: prompt,
+        config: {
+          temperature: 0.3,
+        },
+      });
+    }
 
     return res.json({
       ok: true,

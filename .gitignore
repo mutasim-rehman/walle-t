@@ -28,3 +28,4 @@ Thumbs.db
 # Test Files
 test_gemini.py
 test_grok.py
+gemini_api_probe.py
