@@ -35,6 +35,9 @@ const advisorPromptBuckets = new Map();
 const ADVISOR_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const ADVISOR_MAX_IN_WINDOW = 3;
 const ADVISOR_WINDOW_MS = 6 * 60 * 60 * 1000;
+const PASSWORD_RESET_TOKEN_TTL_MS = Number(process.env.PASSWORD_RESET_TOKEN_TTL_MS || 30 * 60 * 1000);
+const PASSWORD_RESET_SECRET =
+  process.env.PASSWORD_RESET_SECRET || process.env.GEMINI_API_KEY || "walle-t-password-reset-secret";
 
 app.use("/api", (req, res, next) => {
   const key = `${req.ip || "unknown"}:${req.path}`;
@@ -1155,12 +1158,19 @@ function escapeHtml(value) {
 function emailLayout({ title, intro, bodyHtml }) {
   return `<!doctype html>
 <html>
-  <body style="margin:0;background:#f5f7fb;padding:24px;font-family:Arial,sans-serif;color:#1f2937;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;">
+  <body style="margin:0;background:linear-gradient(135deg,#eff6ff 0%,#f8fafc 50%,#eef2ff 100%);padding:24px;font-family:Arial,sans-serif;color:#1f2937;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:16px;border:1px solid #dbe4f0;box-shadow:0 14px 30px rgba(15,23,42,0.08);overflow:hidden;">
       <tr>
-        <td style="padding:24px 24px 8px 24px;">
+        <td style="padding:0;background:linear-gradient(135deg,#1d4ed8,#0f172a);">
+          <div style="padding:22px 24px;">
+            <h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:.2px;">Walle-T Security Center</h1>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:24px 24px 6px 24px;">
           <h2 style="margin:0 0 8px 0;color:#111827;">${escapeHtml(title)}</h2>
-          <p style="margin:0;color:#374151;line-height:1.6;">${intro}</p>
+          <p style="margin:0;color:#334155;line-height:1.7;">${intro}</p>
         </td>
       </tr>
       <tr>
@@ -1168,7 +1178,7 @@ function emailLayout({ title, intro, bodyHtml }) {
       </tr>
       <tr>
         <td style="padding:0 24px 24px 24px;">
-          <p style="margin:0;color:#6b7280;font-size:12px;">Walle-T Security Notifications</p>
+          <p style="margin:0;color:#6b7280;font-size:12px;">This is an automated security notification from Walle-T.</p>
         </td>
       </tr>
     </table>
@@ -1209,26 +1219,164 @@ function buildSignupEmailHtml(user) {
   });
 }
 
-function buildLoginEmailHtml(user, req) {
-  const userAgent = req.get("user-agent") || "Unknown device";
+async function resolveLoginLocation(req) {
   const forwarded = req.headers["x-forwarded-for"];
   const ip =
     (Array.isArray(forwarded) ? forwarded[0] : String(forwarded || "").split(",")[0].trim()) ||
     req.ip ||
-    "Unknown IP";
+    "";
+
+  const normalized = String(ip).trim();
+  if (!normalized || normalized === "::1" || normalized === "127.0.0.1" || normalized.toLowerCase() === "localhost") {
+    return "Localhost";
+  }
+
+  try {
+    const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(normalized)}?fields=status,city,country`);
+    if (!res.ok) return "Unknown location";
+    const payload = await res.json();
+    if (String(payload?.status || "").toLowerCase() !== "success") return "Unknown location";
+    const city = String(payload?.city || "").trim();
+    const country = String(payload?.country || "").trim();
+    if (city && country) return `${city}, ${country}`;
+    if (country) return country;
+    return "Unknown location";
+  } catch {
+    return "Unknown location";
+  }
+}
+
+function toBase64Url(input) {
+  return Buffer.from(input)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function fromBase64Url(input) {
+  const normalized = String(input || "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const padded = normalized + "===".slice((normalized.length + 3) % 4);
+  return Buffer.from(padded, "base64").toString("utf-8");
+}
+
+function stablePasswordMarker(passwordHash) {
+  return crypto.createHash("sha256").update(String(passwordHash || "")).digest("hex").slice(0, 20);
+}
+
+function createPasswordResetToken(user) {
+  const payloadObj = {
+    uid: String(user?.id || ""),
+    email: String(user?.email || "").toLowerCase(),
+    ph: stablePasswordMarker(user?.passwordHash),
+    exp: Date.now() + PASSWORD_RESET_TOKEN_TTL_MS,
+    nonce: crypto.randomBytes(8).toString("hex"),
+  };
+  const payload = toBase64Url(JSON.stringify(payloadObj));
+  const sig = crypto.createHmac("sha256", PASSWORD_RESET_SECRET).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+function verifyPasswordResetToken(token) {
+  const raw = String(token || "").trim();
+  const [payload, signature] = raw.split(".");
+  if (!payload || !signature) return { ok: false, reason: "Invalid token format." };
+  const expected = crypto.createHmac("sha256", PASSWORD_RESET_SECRET).update(payload).digest("hex");
+  const a = Buffer.from(signature, "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, reason: "Invalid token signature." };
+  }
+  try {
+    const data = JSON.parse(fromBase64Url(payload));
+    if (Date.now() > Number(data?.exp || 0)) {
+      return { ok: false, reason: "Reset link expired." };
+    }
+    if (!data?.uid || !data?.email) {
+      return { ok: false, reason: "Invalid token payload." };
+    }
+    return { ok: true, data };
+  } catch {
+    return { ok: false, reason: "Invalid token payload." };
+  }
+}
+
+async function updateUserPasswordInSheet({ userId, passwordHash }) {
+  const { sheetId, clientEmail, privateKey, sheetName } = getGoogleConfig();
+  if (!sheetId || !clientEmail || !privateKey) {
+    throw new Error("Google Sheets env vars are incomplete");
+  }
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+  const candidateRanges = [];
+  if (sheetName) candidateRanges.push(`${sheetName}!A:F`);
+  candidateRanges.push("Users!A:F");
+  candidateRanges.push("Sheet1!A:F");
+  candidateRanges.push("A:F");
+
+  let rows = [];
+  let selectedSheet = sheetName || "Users";
+  let lastError = null;
+  for (const range of candidateRanges) {
+    try {
+      const resp = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range });
+      rows = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      selectedSheet = range.includes("!") ? range.split("!")[0] : selectedSheet;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!rows.length && lastError) throw lastError;
+
+  let rowIndex = null;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i] || [];
+    const id = String(row[4] || "").trim();
+    if (String(row[2] || "").toLowerCase() === "email") continue;
+    if (id && id === String(userId).trim()) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  if (rowIndex == null) {
+    throw new Error("User row not found for password update.");
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${selectedSheet}!D${rowIndex}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[passwordHash]] },
+  });
+  usersCache = { users: null, fetchedAt: 0 };
+}
+
+function buildLoginEmailHtml(user, { location, resetUrl }) {
   const loginAt = new Date().toLocaleString("en-US", { timeZone: "UTC", timeZoneName: "short" });
 
   return emailLayout({
     title: "Login Detected",
     intro: `Hi <strong>${escapeHtml(user.username)}</strong>, your account was just accessed.`,
     bodyHtml: `
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e5e7eb;border-radius:8px;">
-        <tr><td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;"><strong>Time</strong>: ${escapeHtml(loginAt)}</td></tr>
-        <tr><td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;"><strong>IP</strong>: ${escapeHtml(ip)}</td></tr>
-        <tr><td style="padding:10px 12px;"><strong>Device</strong>: ${escapeHtml(userAgent)}</td></tr>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe4f0;border-radius:10px;">
+        <tr><td style="padding:12px 14px;border-bottom:1px solid #dbe4f0;"><strong>Time</strong>: ${escapeHtml(loginAt)}</td></tr>
+        <tr><td style="padding:12px 14px;"><strong>Location</strong>: ${escapeHtml(location || "Unknown location")}</td></tr>
       </table>
-      <p style="margin:14px 0 0 0;color:#b91c1c;line-height:1.6;">
-        If this was not you, please change your password immediately.
+      <p style="margin:14px 0 12px 0;color:#b91c1c;line-height:1.6;">
+        If this was not you, secure your account immediately.
+      </p>
+      <a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#dc2626;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:700;">
+        Change Password
+      </a>
+      <p style="margin:10px 0 0 0;color:#6b7280;font-size:12px;line-height:1.5;">
+        This link expires in ${Math.max(1, Math.floor(PASSWORD_RESET_TOKEN_TTL_MS / 60000))} minutes.
       </p>
     `,
   });
@@ -1398,16 +1546,87 @@ app.post("/api/auth/login", async (req, res) => {
   }
 
   try {
+    const location = await resolveLoginLocation(req);
+    const resetToken = createPasswordResetToken(found);
+    const backendBase = process.env.BACKEND_BASE_URL || `http://localhost:${PORT}`;
+    const resetUrl = `${backendBase}/api/auth/password-reset?token=${encodeURIComponent(resetToken)}`;
     await sendAuthEmail({
       to: found.email,
       subject: "Walle-T login alert",
-      html: buildLoginEmailHtml(found, req),
+      html: buildLoginEmailHtml(found, { location, resetUrl }),
     });
   } catch (error) {
     console.error("Login email failed:", error.message || error);
   }
 
   return res.json({ ok: true, user: safeUser(found) });
+});
+
+app.get("/api/auth/password-reset", (req, res) => {
+  const token = String(req.query?.token || "").trim();
+  if (!token) {
+    return res.status(400).send("Invalid password reset link.");
+  }
+  return res.send(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Walle-T Password Reset</title>
+  </head>
+  <body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a;">
+    <div style="max-width:460px;margin:40px auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:22px;">
+      <h2 style="margin:0 0 8px 0;">Change Password</h2>
+      <p style="margin:0 0 16px 0;color:#475569;">Enter your new password to secure your account.</p>
+      <form method="POST" action="/api/auth/password-reset">
+        <input type="hidden" name="token" value="${escapeHtml(token)}" />
+        <input name="newPassword" type="password" minlength="6" required placeholder="New password (min 6 chars)"
+          style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;margin-bottom:10px;" />
+        <button type="submit" style="width:100%;background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:10px 12px;font-weight:700;cursor:pointer;">
+          Update Password
+        </button>
+      </form>
+    </div>
+  </body>
+</html>`);
+});
+
+app.post("/api/auth/password-reset", express.urlencoded({ extended: false }), async (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  const newPassword = String(req.body?.newPassword || "");
+  if (!token || newPassword.length < 6) {
+    return res.status(400).send("Invalid reset request. Password must be at least 6 characters.");
+  }
+  const verified = verifyPasswordResetToken(token);
+  if (!verified.ok) {
+    return res.status(400).send(`Reset link is invalid or expired. ${verified.reason}`);
+  }
+
+  let users = [];
+  try {
+    users = await readUsersFromSheet({ forceRefresh: true });
+  } catch (error) {
+    return res.status(500).send(`Failed to read users: ${escapeHtml(String(error.message || error))}`);
+  }
+  const user = users.find(
+    (u) =>
+      String(u.id) === String(verified.data.uid) &&
+      String(u.email || "").toLowerCase() === String(verified.data.email || "").toLowerCase()
+  );
+  if (!user) {
+    return res.status(404).send("User not found.");
+  }
+  if (stablePasswordMarker(user.passwordHash) !== String(verified.data.ph || "")) {
+    return res.status(400).send("This reset link is no longer valid. Please request a fresh login alert.");
+  }
+
+  try {
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await updateUserPasswordInSheet({ userId: user.id, passwordHash: newHash });
+    return res.send("Password updated successfully. You can now log in with the new password.");
+  } catch (error) {
+    return res.status(500).send(`Failed to update password: ${escapeHtml(String(error.message || error))}`);
+  }
 });
 
 app.get("/api/auth/session/:userId", async (req, res) => {
