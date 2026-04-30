@@ -51,7 +51,7 @@ const BlockChart = () => {
 
 const LoadingScreen = () => {
   return (
-    <div className="full-center" style={{ background: 'var(--bg-main)', zIndex: 50, position: 'fixed', top: 0, left: 0 }}>
+    <div className="full-center" style={{ background: 'radial-gradient(circle at 20% 20%, #dbeafe 0%, #eff6ff 35%, #f8fafc 75%)', zIndex: 50, position: 'fixed', top: 0, left: 0 }}>
       {/* 3D Canvas Background */}
       <div style={{ position: 'absolute', width: '100%', height: '100%', zIndex: 1, pointerEvents: 'none' }}>
         <Canvas>
@@ -64,10 +64,14 @@ const LoadingScreen = () => {
       </div>
       
       {/* Overlay Content */}
-      <div style={{ zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', background: 'rgba(255,255,255,0.7)', padding: '24px 48px', borderRadius: '12px', border: '1px solid var(--border-color)', backdropFilter: 'blur(10px)', boxShadow: 'var(--shadow-lg)' }}>
-        <h1 style={{ fontSize: '2.5rem', marginBottom: '8px', color: '#0f172a', letterSpacing: '-1px' }}>
+      <div style={{ zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', background: 'rgba(255,255,255,0.82)', padding: '28px 56px', borderRadius: '16px', border: '1px solid #cbd5e1', backdropFilter: 'blur(12px)', boxShadow: 'var(--shadow-lg)' }}>
+        <h1 style={{ fontSize: '2.6rem', marginBottom: '8px', color: '#0f172a', letterSpacing: '-1px' }}>
           Walle-T
         </h1>
+        <p style={{ marginBottom: 16, color: '#334155', fontWeight: 600 }}>Market intelligence terminal is booting...</p>
+        <div style={{ width: 220, height: 6, background: '#e2e8f0', borderRadius: 999, overflow: 'hidden', marginBottom: 14 }}>
+          <div className="loading-progress" />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div className="spinner-rect" />
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 600, letterSpacing: '1px', textTransform: 'uppercase' }}>
@@ -83,10 +87,21 @@ const LoadingScreen = () => {
           background-color: var(--brand-primary);
           animation: flip 1.2s infinite ease-in-out;
         }
+        .loading-progress {
+          width: 50%;
+          height: 100%;
+          background: linear-gradient(90deg, #2563eb, #38bdf8);
+          animation: loadingSweep 1.3s ease-in-out infinite;
+        }
         @keyframes flip {
           0% { transform: perspective(120px) rotateX(0deg) rotateY(0deg); }
           50% { transform: perspective(120px) rotateX(-180.1deg) rotateY(0deg); }
           100% { transform: perspective(120px) rotateX(-180deg) rotateY(-179.9deg); }
+        }
+        @keyframes loadingSweep {
+          0% { transform: translateX(-120%); }
+          50% { transform: translateX(70%); }
+          100% { transform: translateX(220%); }
         }
       `}</style>
     </div>

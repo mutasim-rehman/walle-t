@@ -117,17 +117,17 @@ const Login = () => {
   };
 
   return (
-    <div className="full-center" style={{ position: 'relative', padding: '40px 0' }}>
+    <div className="full-center" style={{ position: 'relative', padding: '40px 0', background: 'radial-gradient(circle at top right, #dbeafe 0%, #eff6ff 42%, #f8fafc 80%)' }}>
       {/* Background Decor */}
-      <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '30vh', background: 'linear-gradient(135deg, var(--brand-primary), #1e3a8a)', zIndex: 0 }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '34vh', background: 'linear-gradient(135deg, #1d4ed8, #0f172a)', zIndex: 0 }} />
       
-      <div className={`finance-card animate-fade-in ${isError ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: mode === 'signup' ? '600px' : '440px', padding: '48px 40px', zIndex: 10, position: 'relative' }}>
+      <div className={`finance-card animate-fade-in ${isError ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: mode === 'signup' ? '620px' : '460px', padding: '48px 40px', zIndex: 10, position: 'relative', borderRadius: 14 }}>
         
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '32px' }}>
           <div style={{ background: '#eff6ff', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #bfdbfe' }}>
             <Building size={32} color="var(--brand-primary)" />
           </div>
-          <h2 style={{ fontSize: '1.75rem', marginBottom: '8px' }}>Walle-T Terminal</h2>
+          <h2 style={{ fontSize: '1.9rem', marginBottom: '8px' }}>Walle-T Terminal</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
             {mode === 'signup' ? 'Create your account' : 'Secure Financial Simulation Engine'}
           </p>
@@ -251,7 +251,7 @@ const Login = () => {
             </div>
           )}
 
-          <button type="submit" className="btn-primary" disabled={busy} style={{ width: '100%', marginTop: message ? '0' : '8px', padding: '14px' }}>
+          <button type="submit" className="btn-primary" disabled={busy} style={{ width: '100%', marginTop: message ? '0' : '8px', padding: '14px', fontWeight: 700 }}>
             {busy ? 'Working...' : (mode === 'signup' ? 'Create Account' : 'Authenticate')} <ArrowRight size={18} />
           </button>
 

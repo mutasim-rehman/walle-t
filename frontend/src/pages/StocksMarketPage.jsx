@@ -51,6 +51,49 @@ export default function StocksMarketPage() {
   }, [currentUser?.id, msg]);
 
   const latest = useMemo(() => series[series.length - 1]?.value ?? null, [series]);
+  const first = useMemo(() => series[0]?.value ?? null, [series]);
+  const high = useMemo(
+    () => (series.length ? Math.max(...series.map((p) => Number(p.value)).filter(Number.isFinite)) : null),
+    [series]
+  );
+  const low = useMemo(
+    () => (series.length ? Math.min(...series.map((p) => Number(p.value)).filter(Number.isFinite)) : null),
+    [series]
+  );
+  const avg = useMemo(() => {
+    if (!series.length) return null;
+    const nums = series.map((p) => Number(p.value)).filter(Number.isFinite);
+    if (!nums.length) return null;
+    return nums.reduce((a, b) => a + b, 0) / nums.length;
+  }, [series]);
+  const changePct = useMemo(() => {
+    if (first == null || latest == null || first === 0) return null;
+    return ((latest - first) / first) * 100;
+  }, [first, latest]);
+
+  const projectedSeries = useMemo(() => {
+    if (series.length < 6) return [];
+    const tail = series.slice(-8);
+    const deltas = [];
+    for (let i = 1; i < tail.length; i += 1) {
+      const prev = Number(tail[i - 1].value);
+      const curr = Number(tail[i].value);
+      if (!Number.isFinite(prev) || !Number.isFinite(curr) || prev === 0) continue;
+      deltas.push((curr - prev) / prev);
+    }
+    const drift = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
+    const baseTime = new Date(series[series.length - 1].time).getTime();
+    let next = Number(series[series.length - 1].value);
+    const out = [];
+    for (let i = 1; i <= 12; i += 1) {
+      next *= 1 + drift;
+      out.push({
+        time: new Date(baseTime + i * 24 * 60 * 60 * 1000).toISOString(),
+        value: Number(next.toFixed(4)),
+      });
+    }
+    return out;
+  }, [series]);
 
   async function placeTrade(e) {
     e.preventDefault();
@@ -85,7 +128,32 @@ export default function StocksMarketPage() {
           <p style={{ color: 'var(--text-muted)', marginTop: 4 }}>Latest: {latest == null ? '-' : latest.toFixed(2)}</p>
         </div>
         <div style={{ padding: 16 }}>
-          <SimpleLineChart series={series} />
+          <SimpleLineChart series={series} secondarySeries={projectedSeries} />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(5, minmax(140px, 1fr))', gap: 10 }}>
+        <div className="finance-card" style={{ padding: 14 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Session High</div>
+          <div style={{ fontWeight: 800 }}>{high == null ? '-' : high.toFixed(2)}</div>
+        </div>
+        <div className="finance-card" style={{ padding: 14 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Session Low</div>
+          <div style={{ fontWeight: 800 }}>{low == null ? '-' : low.toFixed(2)}</div>
+        </div>
+        <div className="finance-card" style={{ padding: 14 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Average</div>
+          <div style={{ fontWeight: 800 }}>{avg == null ? '-' : avg.toFixed(2)}</div>
+        </div>
+        <div className="finance-card" style={{ padding: 14 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Start Price</div>
+          <div style={{ fontWeight: 800 }}>{first == null ? '-' : first.toFixed(2)}</div>
+        </div>
+        <div className="finance-card" style={{ padding: 14 }}>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Period Change</div>
+          <div style={{ fontWeight: 800, color: changePct == null ? 'var(--text-main)' : changePct >= 0 ? 'var(--status-positive)' : 'var(--status-negative)' }}>
+            {changePct == null ? '-' : `${changePct.toFixed(2)}%`}
+          </div>
         </div>
       </div>
 

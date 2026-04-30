@@ -68,10 +68,6 @@ export default function DashboardHome() {
           <h3 style={{ marginBottom: 6 }}>Forex Trading</h3>
           <p style={{ color: 'var(--text-muted)' }}>Major pairs with live synthetic feed.</p>
         </Link>
-        <Link to="/market/options" className="finance-card" style={{ padding: 18, textDecoration: 'none', color: 'inherit' }}>
-          <h3 style={{ marginBottom: 6 }}>Options Trading</h3>
-          <p style={{ color: 'var(--text-muted)' }}>Contracts, strikes, expiry, premium simulation.</p>
-        </Link>
         <Link to="/risk" className="finance-card" style={{ padding: 18, textDecoration: 'none', color: 'inherit' }}>
           <h3 style={{ marginBottom: 6 }}>Risk Analysis</h3>
           <p style={{ color: 'var(--text-muted)' }}>Exposure mix, concentration and shocks.</p>

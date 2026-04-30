@@ -70,7 +70,7 @@ function App() {
               path="/market/options"
               element={(
                 <ProtectedRoute>
-                  <OptionsMarketPage />
+                  <Navigate to="/dashboard" replace />
                 </ProtectedRoute>
               )}
             />
