@@ -34,23 +34,10 @@ function toPath(points, width, height, min, max, leftPad = 50, rightPad = 16, to
     .join(' ');
 }
 
-function buildPrediction(points, horizon = 8) {
-  if (points.length < 20) return { curve: [], probUp: null };
-  const closes = points.map((p) => p.value);
-  const returns = [];
-  for (let i = 1; i < closes.length; i += 1) {
-    returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
-  }
-
-  const tail = returns.slice(-20);
-  const mean = tail.reduce((a, b) => a + b, 0) / tail.length;
-  const varPart = tail.reduce((a, b) => a + (b - mean) ** 2, 0) / tail.length;
-  const stdev = Math.sqrt(varPart);
-
-  const score = Math.max(-4, Math.min(4, (mean * 100) / Math.max(0.6, stdev * 100)));
-  const probUp = 1 / (1 + Math.exp(-score));
+function buildPrediction(points, modelProbUp, horizon = 8) {
+  if (!points.length || modelProbUp == null) return { curve: [], probUp: null };
+  const probUp = Math.max(0, Math.min(1, Number(modelProbUp)));
   const drift = (probUp - 0.5) * 0.012;
-
   const start = points[points.length - 1];
   const curve = [];
   let prev = start.value;
@@ -72,6 +59,8 @@ export default function CompanyPrediction() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [series, setSeries] = useState([]);
+  const [modelProbUp, setModelProbUp] = useState(null);
+  const [modelMeta, setModelMeta] = useState(null);
 
   useEffect(() => {
     setSymbol((symbolParam || 'ABOT').toUpperCase());
@@ -85,9 +74,12 @@ export default function CompanyPrediction() {
       setError('');
       try {
         const type = range === '1D' ? 'int' : 'eod';
-        const res = await fetch(`/psx/timeseries/${type}/${encodeURIComponent(symbol)}`);
-        if (!res.ok) throw new Error(`PSX request failed (${res.status})`);
-        const payload = await res.json();
+        const [priceRes, modelRes] = await Promise.all([
+          fetch(`/psx/timeseries/${type}/${encodeURIComponent(symbol)}`),
+          fetch(`/api/model-prediction/${encodeURIComponent(symbol)}`),
+        ]);
+        if (!priceRes.ok) throw new Error(`PSX request failed (${priceRes.status})`);
+        const payload = await priceRes.json();
         const rows = Array.isArray(payload?.data) ? payload.data : [];
         const points = rows
           .map((d) => ({
@@ -96,10 +88,30 @@ export default function CompanyPrediction() {
           }))
           .filter((p) => Number.isFinite(p.value))
           .sort((a, b) => a.time - b.time);
-        if (!ignore) setSeries(points);
+        if (!modelRes.ok) {
+          const modelErr = await modelRes.json().catch(() => ({}));
+          throw new Error(modelErr?.message || `Model prediction request failed (${modelRes.status})`);
+        }
+        const modelPayload = await modelRes.json();
+        const probUp = Number(modelPayload?.prediction?.prob_up);
+
+        if (!Number.isFinite(probUp)) {
+          throw new Error('Model prediction payload is missing a valid probability.');
+        }
+
+        if (!ignore) {
+          setSeries(points);
+          setModelProbUp(probUp);
+          setModelMeta({
+            model: modelPayload?.model || 'unknown',
+            generatedAt: modelPayload?.generatedAt || null,
+          });
+        }
       } catch (e) {
         if (!ignore) {
           setSeries([]);
+          setModelProbUp(null);
+          setModelMeta(null);
           setError(e.message || 'Failed to load company data');
         }
       } finally {
@@ -113,7 +125,7 @@ export default function CompanyPrediction() {
   }, [symbol, range]);
 
   const visible = useMemo(() => filterByRange(series, range), [series, range]);
-  const prediction = useMemo(() => buildPrediction(visible), [visible]);
+  const prediction = useMemo(() => buildPrediction(visible, modelProbUp), [visible, modelProbUp]);
 
   const chartData = useMemo(() => {
     if (!visible.length) return { actualPath: '', predPath: '', min: 0, max: 1 };
@@ -186,6 +198,12 @@ export default function CompanyPrediction() {
               <span>Blue: market price</span>
               <span>Orange dashed: model prediction</span>
             </div>
+            {modelMeta?.model && (
+              <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: 13 }}>
+                Prediction source: <strong>{modelMeta.model}</strong>
+                {modelMeta.generatedAt ? ` · generated ${new Date(modelMeta.generatedAt).toLocaleString()}` : ''}
+              </div>
+            )}
             <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
               <div className="finance-card" style={{ padding: 12 }}>
                 <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Last Price</div>

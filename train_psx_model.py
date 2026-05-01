@@ -383,7 +383,9 @@ def main() -> None:
             "positive_rate": float(y_true.mean()),
         }
 
-    def run_one_model(model_name: str, pipe: Pipeline) -> tuple[dict, dict, dict]:
+    def run_one_model(
+        model_name: str, pipe: Pipeline
+    ) -> tuple[Pipeline, dict, dict, dict]:
         print(f"\n=== {model_name} ===")
         pipe.fit(X_train, y_train)
         y_val_prob = pipe.predict_proba(X_val)[:, 1]
@@ -404,10 +406,12 @@ def main() -> None:
             "chosen_threshold": float(best_t),
             "validation_objective_score": float(best_obj),
         }
-        return val_metrics_local, test_metrics_local, tuning
+        return pipe, val_metrics_local, test_metrics_local, tuning
 
-    log_val, log_test, log_tune = run_one_model("Logistic Baseline", build_logistic_pipeline())
-    tree_val, tree_test, tree_tune = run_one_model(
+    log_model, log_val, log_test, log_tune = run_one_model(
+        "Logistic Baseline", build_logistic_pipeline()
+    )
+    tree_model, tree_val, tree_test, tree_tune = run_one_model(
         "HistGradientBoosting (Global Tree Model)", build_tree_pipeline()
     )
 
@@ -420,6 +424,13 @@ def main() -> None:
 
     best_model = "logistic_baseline" if log_score >= tree_score else "global_tree_model"
     print(f"\nSelected best model by validation {args.threshold_objective}: {best_model}")
+
+    selected_model = log_model if best_model == "logistic_baseline" else tree_model
+    selected_threshold = (
+        log_tune["chosen_threshold"]
+        if best_model == "logistic_baseline"
+        else tree_tune["chosen_threshold"]
+    )
 
     out = {
         "splits": {
@@ -449,6 +460,45 @@ def main() -> None:
     metrics_path = Path("psx_model_metrics.json")
     metrics_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"\nMetrics written to {metrics_path}")
+
+    # Also export the latest per-symbol model predictions for runtime usage in the web app.
+    latest_rows = (
+        df.sort_values(["symbol", "query_date"])
+        .groupby("symbol", as_index=False)
+        .tail(1)
+        .copy()
+    )
+    X_latest = latest_rows.loc[:, feature_cols]
+    probs = selected_model.predict_proba(X_latest)[:, 1]
+    latest_rows["prob_up"] = probs
+    latest_rows["predicted_direction"] = np.where(
+        latest_rows["prob_up"] >= float(selected_threshold), "UP", "DOWN"
+    )
+
+    predictions = []
+    for row in latest_rows.itertuples(index=False):
+        predictions.append(
+            {
+                "symbol": str(row.symbol),
+                "as_of": pd.to_datetime(row.query_date).strftime("%Y-%m-%d"),
+                "close": float(row.close),
+                "prob_up": float(row.prob_up),
+                "predicted_direction": str(row.predicted_direction),
+            }
+        )
+
+    predictions.sort(key=lambda x: x["symbol"])
+    pred_out = {
+        "generated_at": pd.Timestamp.utcnow().isoformat(),
+        "model": best_model,
+        "threshold": float(selected_threshold),
+        "count": len(predictions),
+        "predictions": predictions,
+    }
+    pred_path = Path("backend/data/psx_model_symbol_predictions.json")
+    pred_path.parent.mkdir(parents=True, exist_ok=True)
+    pred_path.write_text(json.dumps(pred_out, indent=2), encoding="utf-8")
+    print(f"Symbol predictions written to {pred_path}")
 
 
 if __name__ == "__main__":

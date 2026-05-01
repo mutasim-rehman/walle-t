@@ -10,6 +10,9 @@ const { GoogleGenAI } = require("@google/genai");
 const nodemailer = require("nodemailer");
 
 const projectRoot = path.resolve(__dirname, "..");
+const MODEL_PREDICTIONS_PATH = path.resolve(
+  process.env.MODEL_PREDICTIONS_PATH || path.join(__dirname, "data", "psx_model_symbol_predictions.json")
+);
 const dotenvCandidates = [".env", "env"];
 for (const candidate of dotenvCandidates) {
   const fullPath = path.join(projectRoot, candidate);
@@ -130,6 +133,18 @@ function readJsonFile(filePath, fallbackValue) {
 function writeJsonFile(filePath, value) {
   ensureJsonFile(filePath, JSON.stringify(value ?? null, null, 2));
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
+}
+
+function readModelPredictions() {
+  try {
+    if (!fs.existsSync(MODEL_PREDICTIONS_PATH)) return null;
+    const raw = fs.readFileSync(MODEL_PREDICTIONS_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.predictions)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 function ensureActivitiesFile() {
@@ -2447,6 +2462,39 @@ app.post("/api/forecast", async (req, res) => {
     },
     series: { best, base, worst },
     narrative,
+  });
+});
+
+app.get("/api/model-prediction/:symbol", (req, res) => {
+  const symbol = String(req.params.symbol || "").trim().toUpperCase();
+  if (!symbol) return res.status(400).json({ ok: false, message: "symbol is required." });
+
+  const modelData = readModelPredictions();
+  if (!modelData) {
+    return res.status(404).json({
+      ok: false,
+      message:
+        "Model predictions are not available yet. Run `python train_psx_model.py` to generate backend/data/psx_model_symbol_predictions.json.",
+    });
+  }
+
+  const prediction = modelData.predictions.find(
+    (row) => String(row?.symbol || "").trim().toUpperCase() === symbol
+  );
+  if (!prediction) {
+    return res.status(404).json({
+      ok: false,
+      message: `No model prediction found for symbol ${symbol}.`,
+    });
+  }
+
+  return res.json({
+    ok: true,
+    symbol,
+    prediction,
+    model: modelData.model,
+    threshold: modelData.threshold,
+    generatedAt: modelData.generated_at,
   });
 });
 
