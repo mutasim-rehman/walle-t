@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Activity, Users, Settings, LogOut, Search, Bell, TrendingUp, DollarSign, Download, Building, Shield, MessageSquare } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
+import { API_BASE } from '../lib/api';
 
 function formatMoney(n) {
   const v = Number(n);
@@ -35,7 +36,6 @@ const Dashboard = () => {
   const [advisorError, setAdvisorError] = useState('');
   const [advisorLoading, setAdvisorLoading] = useState(false);
   const quickSymbols = ['ABOT', 'ENGRO', 'LUCK', 'HBL', 'OGDC', 'PPL', 'TRG', 'FFC', 'MCB', 'UBL'];
-  const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 
   const [profileStatusLoading, setProfileStatusLoading] = useState(false);
   const [portfolioLoading, setPortfolioLoading] = useState(false);

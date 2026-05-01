@@ -1,4 +1,9 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const backendLink = (import.meta.env.VITE_BACKEND_LINK || '').trim();
+const normalizedBackend = backendLink ? backendLink.replace(/\/+$/, '') : '';
+
+export const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ||
+  (normalizedBackend ? `${normalizedBackend}/api` : '/api');
 
 export async function apiGet(path) {
   const res = await fetch(`${API_BASE}${path}`);

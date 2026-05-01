@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { API_BASE } from '../lib/api';
 
 const SESSION_KEY = 'wallet_session_v1';
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const API_FALLBACK_BASE = 'http://localhost:4001/api';
 
 const AuthContext = createContext(null);

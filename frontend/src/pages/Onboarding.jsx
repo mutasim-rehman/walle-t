@@ -2,8 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+import { API_BASE } from '../lib/api';
 
 function toNum(v) {
   if (v == null) return null;

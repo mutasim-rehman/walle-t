@@ -8,11 +8,21 @@ const dotenv = require("dotenv");
 const { google } = require("googleapis");
 const { GoogleGenAI } = require("@google/genai");
 const nodemailer = require("nodemailer");
+const registerHealthRoutes = require("./routes/healthRoutes");
+const registerAuthRoutes = require("./routes/authRoutes");
+const registerActivitiesRoutes = require("./routes/activitiesRoutes");
+const registerAdvisorRoutes = require("./routes/advisorRoutes");
+const registerProfileRoutes = require("./routes/profileRoutes");
+const registerOnboardingRoutes = require("./routes/onboardingRoutes");
+const registerPortfolioRoutes = require("./routes/portfolioRoutes");
+const registerForecastRoutes = require("./routes/forecastRoutes");
+const registerModelPredictionRoutes = require("./routes/modelPredictionRoutes");
+const registerSettingsRoutes = require("./routes/settingsRoutes");
+const registerMarketRoutes = require("./routes/marketRoutes");
+const registerTradeRoutes = require("./routes/tradeRoutes");
+const registerRiskRoutes = require("./routes/riskRoutes");
 
 const projectRoot = path.resolve(__dirname, "..");
-const MODEL_PREDICTIONS_PATH = path.resolve(
-  process.env.MODEL_PREDICTIONS_PATH || path.join(__dirname, "data", "psx_model_symbol_predictions.json")
-);
 const dotenvCandidates = [".env", "env"];
 for (const candidate of dotenvCandidates) {
   const fullPath = path.join(projectRoot, candidate);
@@ -21,6 +31,9 @@ for (const candidate of dotenvCandidates) {
     break;
   }
 }
+const MODEL_PREDICTIONS_PATH = path.resolve(
+  process.env.MODEL_PREDICTIONS_PATH || path.join(__dirname, "data", "psx_model_symbol_predictions.json")
+);
 
 const PORT = Number(process.env.BACKEND_PORT || 4001);
 const ACTIVITIES_PATH = path.resolve(__dirname, "data", "activities.json");
@@ -1397,740 +1410,6 @@ function buildLoginEmailHtml(user, { location, resetUrl }) {
   });
 }
 
-app.get("/api/health", (_req, res) => {
-  const cfg = getGoogleConfig();
-  const txCfg = getTransactionalSheetConfig();
-  const profileCfg = getProfilesSheetConfig();
-  res.json({
-    ok: true,
-    sheetIdPresent: Boolean(cfg.sheetId),
-    serviceEmailPresent: Boolean(cfg.clientEmail),
-    privateKeyPresent: Boolean(cfg.privateKey),
-    transactionalSheetIdPresent: Boolean(txCfg.sheetId),
-    transactionalSheetName: txCfg.sheetName,
-    profilesSheetName: profileCfg.sheetName,
-    geminiConfigured: Boolean(getGeminiClient()),
-    geminiModel: GEMINI_MODEL,
-    sheetName: cfg.sheetName || "(auto)",
-  });
-});
-
-app.post("/api/auth/signup", async (req, res) => {
-  const { email, username, password } = req.body || {};
-  const result = await createUserAccount({ email, username, password });
-  if (!result.ok) {
-    return res.status(result.status || 500).json({
-      ok: false,
-      message: result.message || "Signup failed.",
-      details: result.details,
-    });
-  }
-  return res.json({ ok: true, user: safeUser(result.user) });
-});
-
-app.post("/api/auth/signup-complete", async (req, res) => {
-  const { email, username, password, profile, initialHoldings } = req.body || {};
-  const signupResult = await createUserAccount({ email, username, password });
-  if (!signupResult.ok) {
-    return res.status(signupResult.status || 500).json({
-      ok: false,
-      message: signupResult.message || "Signup failed.",
-      details: signupResult.details,
-    });
-  }
-  const user = signupResult.user;
-
-  // Run onboarding bootstrap in the same request so signup+onboarding is one step.
-  let existingProfile = null;
-  try {
-    existingProfile = await readProfileFromSheet(user.id);
-  } catch {
-    existingProfile = null;
-  }
-
-  const payload = profile && typeof profile === "object" ? profile : {};
-  const nextProfile = {
-    userId: user.id,
-    age: payload.age == null || payload.age === "" ? null : Number(payload.age),
-    country: String(payload.country || "").trim(),
-    monthlyIncome: payload.monthlyIncome == null || payload.monthlyIncome === "" ? null : Number(payload.monthlyIncome),
-    monthlyExpenses:
-      payload.monthlyExpenses == null || payload.monthlyExpenses === "" ? null : Number(payload.monthlyExpenses),
-    currentCash: payload.currentCash == null || payload.currentCash === "" ? null : Number(payload.currentCash),
-    assets: payload.assets && typeof payload.assets === "object" ? payload.assets : {},
-    liabilities: payload.liabilities && typeof payload.liabilities === "object" ? payload.liabilities : {},
-    extras: payload.extras && typeof payload.extras === "object" ? payload.extras : {},
-    updatedAt: new Date().toISOString(),
-    createdAt: existingProfile?.createdAt || new Date().toISOString(),
-  };
-
-  try {
-    await upsertProfileToSheet(nextProfile);
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message:
-        "Account created, but failed to store profile in Google Sheet. Ensure Transactional_History is shared with service account.",
-      details: String(error.message || error),
-    });
-  }
-
-  let existingTx = [];
-  try {
-    existingTx = await readTransactionsForUser(user.id, { limit: 500 });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message:
-        "Account created, but failed to read transactions from Google Sheet. Ensure Transactional_History is shared with service account.",
-      details: String(error.message || error),
-    });
-  }
-
-  const hasDeposit = existingTx.some((tx) => String(tx.type || "").toUpperCase() === "DEPOSIT");
-  let cashAfter = computeLedgerState(existingTx).cash;
-  const createdAt = new Date().toISOString();
-  try {
-    if (!hasDeposit) {
-      cashAfter += DEFAULT_STARTING_INVESTMENT_USD;
-      await appendTransactionRow({
-        createdAt,
-        userId: user.id,
-        type: "DEPOSIT",
-        amount: DEFAULT_STARTING_INVESTMENT_USD,
-        cashAfter,
-        note: "Default starting investment (no payment gateway).",
-        metaJson: { currency: "USD" },
-      });
-    }
-    const holdings = Array.isArray(initialHoldings) ? initialHoldings : [];
-    for (const h of holdings) {
-      const symbol = String(h?.symbol || "").trim().toUpperCase();
-      const qty = h?.qty == null || h?.qty === "" ? null : Number(h.qty);
-      if (!symbol || !Number.isFinite(qty) || qty <= 0) continue;
-      await appendTransactionRow({
-        createdAt,
-        userId: user.id,
-        type: "PORTFOLIO_IMPORT",
-        symbol,
-        qty,
-        note: "Imported initial portfolio holding.",
-        metaJson: { source: "signup-complete" },
-      });
-    }
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Account created, but failed to write onboarding transactions.",
-      details: String(error.message || error),
-    });
-  }
-
-  return res.json({ ok: true, user: safeUser(user), onboardingComplete: true });
-});
-
-app.post("/api/auth/login", async (req, res) => {
-  const { usernameOrEmail, password } = req.body || {};
-  if (!usernameOrEmail || !password) {
-    return res.status(400).json({ ok: false, message: "username/email and password are required." });
-  }
-
-  const key = String(usernameOrEmail).trim().toLowerCase();
-  let users = [];
-  try {
-    users = await readUsersFromSheet();
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read users from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  const found = users.find(
-    (u) =>
-      String(u.email).toLowerCase() === key ||
-      String(u.username).toLowerCase() === key
-  );
-  if (!found) {
-    return res.status(401).json({ ok: false, message: "Invalid credentials." });
-  }
-
-  const ok = await bcrypt.compare(String(password), found.passwordHash);
-  if (!ok) {
-    return res.status(401).json({ ok: false, message: "Invalid credentials." });
-  }
-
-  try {
-    const location = await resolveLoginLocation(req);
-    const resetToken = createPasswordResetToken(found);
-    const backendBase = process.env.BACKEND_BASE_URL || `http://localhost:${PORT}`;
-    const resetUrl = `${backendBase}/api/auth/password-reset?token=${encodeURIComponent(resetToken)}`;
-    await sendAuthEmail({
-      to: found.email,
-      subject: "Walle-T login alert",
-      html: buildLoginEmailHtml(found, { location, resetUrl }),
-    });
-  } catch (error) {
-    console.error("Login email failed:", error.message || error);
-  }
-
-  return res.json({ ok: true, user: safeUser(found) });
-});
-
-app.get("/api/auth/password-reset", (req, res) => {
-  const token = String(req.query?.token || "").trim();
-  if (!token) {
-    return res.status(400).send("Invalid password reset link.");
-  }
-  return res.send(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Walle-T Password Reset</title>
-  </head>
-  <body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a;">
-    <div style="max-width:460px;margin:40px auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:22px;">
-      <h2 style="margin:0 0 8px 0;">Change Password</h2>
-      <p style="margin:0 0 16px 0;color:#475569;">Enter your new password to secure your account.</p>
-      <form method="POST" action="/api/auth/password-reset">
-        <input type="hidden" name="token" value="${escapeHtml(token)}" />
-        <input name="newPassword" type="password" minlength="6" required placeholder="New password (min 6 chars)"
-          style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;margin-bottom:10px;" />
-        <button type="submit" style="width:100%;background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:10px 12px;font-weight:700;cursor:pointer;">
-          Update Password
-        </button>
-      </form>
-    </div>
-  </body>
-</html>`);
-});
-
-app.post("/api/auth/password-reset", express.urlencoded({ extended: false }), async (req, res) => {
-  const token = String(req.body?.token || "").trim();
-  const newPassword = String(req.body?.newPassword || "");
-  if (!token || newPassword.length < 6) {
-    return res.status(400).send("Invalid reset request. Password must be at least 6 characters.");
-  }
-  const verified = verifyPasswordResetToken(token);
-  if (!verified.ok) {
-    return res.status(400).send(`Reset link is invalid or expired. ${verified.reason}`);
-  }
-
-  let users = [];
-  try {
-    users = await readUsersFromSheet({ forceRefresh: true });
-  } catch (error) {
-    return res.status(500).send(`Failed to read users: ${escapeHtml(String(error.message || error))}`);
-  }
-  const user = users.find(
-    (u) =>
-      String(u.id) === String(verified.data.uid) &&
-      String(u.email || "").toLowerCase() === String(verified.data.email || "").toLowerCase()
-  );
-  if (!user) {
-    return res.status(404).send("User not found.");
-  }
-  if (stablePasswordMarker(user.passwordHash) !== String(verified.data.ph || "")) {
-    return res.status(400).send("This reset link is no longer valid. Please request a fresh login alert.");
-  }
-
-  try {
-    const newHash = await bcrypt.hash(newPassword, 10);
-    await updateUserPasswordInSheet({ userId: user.id, passwordHash: newHash });
-    return res.send("Password updated successfully. You can now log in with the new password.");
-  } catch (error) {
-    return res.status(500).send(`Failed to update password: ${escapeHtml(String(error.message || error))}`);
-  }
-});
-
-app.get("/api/auth/session/:userId", async (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) {
-    return res.status(400).json({ ok: false, message: "userId is required." });
-  }
-  let users = [];
-  try {
-    users = await readUsersFromSheet();
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to validate session against Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  const exists = users.some((u) => String(u.id) === userId);
-  if (!exists) {
-    return res.status(401).json({ ok: false, valid: false, message: "Session user no longer exists." });
-  }
-  return res.json({ ok: true, valid: true });
-});
-
-app.get("/api/activities/:userId", (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) {
-    return res.status(400).json({ ok: false, message: "userId is required." });
-  }
-
-  const activities = readActivities();
-  const userActivities = activities
-    .filter((a) => a.userId === userId)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-  return res.json({ ok: true, activities: userActivities });
-});
-
-app.post("/api/activities", async (req, res) => {
-  const { userId, symbol, activityType, budget, note } = req.body || {};
-  if (!userId || !symbol || !activityType) {
-    return res.status(400).json({
-      ok: false,
-      message: "userId, symbol, and activityType are required.",
-    });
-  }
-
-  let users = [];
-  try {
-    users = await readUsersFromSheet();
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read users from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  const user = users.find((u) => u.id === userId);
-  if (!user) {
-    return res.status(404).json({ ok: false, message: "User not found." });
-  }
-
-  const activities = readActivities();
-  const activity = {
-    id: crypto.randomUUID(),
-    userId,
-    symbol: String(symbol).trim().toUpperCase(),
-    activityType: String(activityType).trim(),
-    budget:
-      budget === "" || budget == null || Number.isNaN(Number(budget))
-        ? null
-        : Number(budget),
-    note: note ? String(note).trim() : "",
-    createdAt: new Date().toISOString(),
-  };
-
-  activities.push(activity);
-  writeActivities(activities);
-  return res.status(201).json({ ok: true, activity });
-});
-
-app.post("/api/advisor", async (req, res) => {
-  const { userId, message } = req.body || {};
-  if (!userId || !String(userId).trim()) {
-    return res.status(400).json({ ok: false, message: "userId is required." });
-  }
-  if (!message || !String(message).trim()) {
-    return res.status(400).json({ ok: false, message: "message is required." });
-  }
-
-  const ai = getGeminiClient();
-  if (!ai) {
-    return res.status(500).json({
-      ok: false,
-      message: "Gemini API key is missing. Set GEMINI_API_KEY in the backend environment.",
-    });
-  }
-
-  let users = [];
-  try {
-    users = await readUsersFromSheet();
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read users from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-
-  const user = users.find((entry) => entry.id === String(userId).trim());
-  if (!user) {
-    return res.status(404).json({ ok: false, message: "User not found." });
-  }
-
-  const advisorQuota = checkAndConsumeAdvisorPrompt(user.id);
-  if (!advisorQuota.allowed) {
-    return res.status(429).json({
-      ok: false,
-      message: `${advisorQuota.message} Try again in ${formatDurationMs(advisorQuota.retryAfterMs)}.`,
-      retryAfterSec: advisorQuota.retryAfterSec,
-      lock: {
-        minIntervalMs: ADVISOR_MIN_INTERVAL_MS,
-        maxPrompts: ADVISOR_MAX_IN_WINDOW,
-        windowMs: ADVISOR_WINDOW_MS,
-      },
-    });
-  }
-
-  const activities = readActivities()
-    .filter((activity) => activity.userId === user.id)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  const portfolio = buildPortfolioSummary(activities);
-
-  let profile = null;
-  try {
-    profile = await readProfileFromSheet(user.id);
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read profile from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(user.id, { limit: 400 });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read transactions from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-
-  const ledger = computeLedgerState(transactions);
-  const financialProfile = buildFinancialProfileSummary(profile);
-  const ledgerSummary = buildLedgerSummary(transactions, ledger);
-  const today = new Date().toISOString().slice(0, 10);
-  const prompt = [
-    "You are Walle-T's financial advisor chatbot for an educational trading simulator.",
-    "Give practical financial guidance based on this user's current portfolio, transactions, and balance sheet.",
-    "Use current affairs when relevant by grounding with Google Search.",
-    "Do not claim certainty or guaranteed returns, and clearly label assumptions.",
-    "This is educational analysis, not professional financial advice.",
-    "",
-    `Date: ${today}`,
-    `User: ${user.username} (${user.email})`,
-    "",
-    "Saved activity context:",
-    portfolio.summary,
-    "",
-    "Financial profile context:",
-    financialProfile.summary,
-    "",
-    "Current simulated portfolio + transactions context:",
-    ledgerSummary,
-    "",
-    "User question:",
-    String(message).trim(),
-    "",
-    "Answer format:",
-    "1. Short answer",
-    "2. Portfolio observations (holdings, cashflow, concentration)",
-    "3. Assets/liabilities implications",
-    "4. Current-affairs impact",
-    "5. Concrete next actions (3-5 bullets)",
-  ].join("\n");
-
-  try {
-    let response = null;
-    try {
-      response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          temperature: 0.3,
-          tools: [{ googleSearch: {} }],
-        },
-      });
-    } catch (searchError) {
-      if (!isGeminiQuotaError(searchError)) throw searchError;
-      // Fallback: if search-tool quota is exhausted, still try a plain response.
-      response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          temperature: 0.3,
-        },
-      });
-    }
-
-    return res.json({
-      ok: true,
-      reply: String(response?.text || "").trim(),
-      model: GEMINI_MODEL,
-      portfolio,
-      profileComplete: isProfileComplete(profile),
-      financialProfile: {
-        assetsTotal: financialProfile.assetsTotal,
-        liabilitiesTotal: financialProfile.liabilitiesTotal,
-        cash: ledger.cash,
-        holdingsCount: ledger.holdings.length,
-      },
-      sources: extractGroundingSources(response),
-    });
-  } catch (error) {
-    console.error("Advisor request failed:", error);
-    const classified = classifyGeminiError(error);
-    return res.status(classified.status).json({
-      ok: false,
-      message: classified.message,
-      details: String(error.message || error),
-    });
-  }
-});
-
-app.get("/api/profile/:userId", (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
-  readProfileFromSheet(userId)
-    .then((profile) => res.json({ ok: true, profile, isComplete: isProfileComplete(profile) }))
-    .catch((error) =>
-      res.status(500).json({
-        ok: false,
-        message:
-          "Failed to read profile from Google Sheet. Ensure the Transactional_History spreadsheet is shared with your service account email.",
-        details: String(error.message || error),
-      })
-    );
-});
-
-app.post("/api/profile/:userId", (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
-  const body = req.body || {};
-
-  const profile = {
-    userId,
-    age: body.age == null || body.age === "" ? null : Number(body.age),
-    country: String(body.country || "").trim(),
-    monthlyIncome: body.monthlyIncome == null || body.monthlyIncome === "" ? null : Number(body.monthlyIncome),
-    monthlyExpenses: body.monthlyExpenses == null || body.monthlyExpenses === "" ? null : Number(body.monthlyExpenses),
-    currentCash: body.currentCash == null || body.currentCash === "" ? null : Number(body.currentCash),
-    assets: body.assets && typeof body.assets === "object" ? body.assets : {},
-    liabilities: body.liabilities && typeof body.liabilities === "object" ? body.liabilities : {},
-    extras: body.extras && typeof body.extras === "object" ? body.extras : {},
-    updatedAt: new Date().toISOString(),
-    createdAt: body.createdAt || new Date().toISOString(),
-  };
-
-  upsertProfileToSheet(profile)
-    .then(() => res.json({ ok: true, profile, isComplete: isProfileComplete(profile) }))
-    .catch((error) =>
-      res.status(500).json({
-        ok: false,
-        message:
-          "Failed to store profile in Google Sheet. Ensure the Transactional_History spreadsheet is shared with your service account email.",
-        details: String(error.message || error),
-      })
-    );
-});
-
-app.post("/api/onboarding/complete", async (req, res) => {
-  const { userId, profile: rawProfile, initialHoldings } = req.body || {};
-  const id = String(userId || "").trim();
-  if (!id) return res.status(400).json({ ok: false, message: "userId is required." });
-
-  // Save profile (minimal required)
-  const profilePayload = rawProfile && typeof rawProfile === "object" ? rawProfile : {};
-  let existingProfile = null;
-  try {
-    existingProfile = await readProfileFromSheet(id);
-  } catch {
-    existingProfile = null;
-  }
-  const nextProfile = {
-    userId: id,
-    age: profilePayload.age == null || profilePayload.age === "" ? null : Number(profilePayload.age),
-    country: String(profilePayload.country || "").trim(),
-    monthlyIncome:
-      profilePayload.monthlyIncome == null || profilePayload.monthlyIncome === ""
-        ? null
-        : Number(profilePayload.monthlyIncome),
-    monthlyExpenses:
-      profilePayload.monthlyExpenses == null || profilePayload.monthlyExpenses === ""
-        ? null
-        : Number(profilePayload.monthlyExpenses),
-    currentCash:
-      profilePayload.currentCash == null || profilePayload.currentCash === ""
-        ? null
-        : Number(profilePayload.currentCash),
-    assets: profilePayload.assets && typeof profilePayload.assets === "object" ? profilePayload.assets : {},
-    liabilities: profilePayload.liabilities && typeof profilePayload.liabilities === "object" ? profilePayload.liabilities : {},
-    extras: profilePayload.extras && typeof profilePayload.extras === "object" ? profilePayload.extras : {},
-    updatedAt: new Date().toISOString(),
-    createdAt: existingProfile?.createdAt || new Date().toISOString(),
-  };
-  try {
-    await upsertProfileToSheet(nextProfile);
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message:
-        "Failed to store profile in Google Sheet. Ensure the Transactional_History spreadsheet is shared with your service account email.",
-      details: String(error.message || error),
-    });
-  }
-
-  // Ledger bootstrap (deposit only once)
-  let existing = [];
-  try {
-    existing = await readTransactionsForUser(id, { limit: 500 });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message:
-        "Failed to read transactions from Google Sheet. Ensure the Transactional_History spreadsheet is shared with your service account email.",
-      details: String(error.message || error),
-    });
-  }
-
-  const hasDeposit = existing.some((tx) => String(tx.type || "").toUpperCase() === "DEPOSIT");
-  let cashAfter = computeLedgerState(existing).cash;
-  const createdAt = new Date().toISOString();
-
-  try {
-    if (!hasDeposit) {
-      cashAfter += DEFAULT_STARTING_INVESTMENT_USD;
-      await appendTransactionRow({
-        createdAt,
-        userId: id,
-        type: "DEPOSIT",
-        symbol: "",
-        qty: "",
-        price: "",
-        amount: DEFAULT_STARTING_INVESTMENT_USD,
-        cashAfter,
-        note: "Default starting investment (no payment gateway).",
-        metaJson: { currency: "USD" },
-      });
-    }
-
-    const holdings = Array.isArray(initialHoldings) ? initialHoldings : [];
-    for (const h of holdings) {
-      const symbol = String(h?.symbol || "").trim().toUpperCase();
-      const qty = h?.qty == null || h?.qty === "" ? null : Number(h.qty);
-      if (!symbol || !Number.isFinite(qty) || qty <= 0) continue;
-      await appendTransactionRow({
-        createdAt,
-        userId: id,
-        type: "PORTFOLIO_IMPORT",
-        symbol,
-        qty,
-        price: "",
-        amount: "",
-        cashAfter: "",
-        note: "Imported initial portfolio holding.",
-        metaJson: { source: "onboarding" },
-      });
-    }
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to write onboarding transactions to Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-
-  return res.json({ ok: true, profile: nextProfile, isComplete: isProfileComplete(nextProfile) });
-});
-
-app.get("/api/portfolio/:userId", async (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
-
-  let profile = null;
-  try {
-    profile = await readProfileFromSheet(userId);
-  } catch {
-    profile = null;
-  }
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(userId, { limit: 300 });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read transactions from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-
-  const ledger = computeLedgerState(transactions);
-  return res.json({
-    ok: true,
-    profile,
-    profileComplete: isProfileComplete(profile),
-    cash: ledger.cash,
-    holdings: ledger.holdings,
-    transactions,
-  });
-});
-
-app.post("/api/trade", async (req, res) => {
-  const { userId, side, symbol, qty } = req.body || {};
-  const id = String(userId || "").trim();
-  const s = String(side || "").trim().toUpperCase();
-  const sym = String(symbol || "").trim().toUpperCase();
-  const quantity = Number(qty);
-  if (!id || !sym || !Number.isFinite(quantity) || quantity <= 0 || (s !== "BUY" && s !== "SELL")) {
-    return res.status(400).json({ ok: false, message: "userId, side(BUY/SELL), symbol, qty are required." });
-  }
-
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(id, { limit: 800 });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read transactions from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  const ledger = computeLedgerState(transactions);
-
-  let priceInfo = null;
-  try {
-    priceInfo = await fetchPsxLatestPrice(sym);
-  } catch (error) {
-    return res.status(502).json({ ok: false, message: "Failed to fetch PSX price.", details: String(error.message || error) });
-  }
-  const price = priceInfo.price;
-  const amount = price * quantity;
-
-  const holdingQty = ledger.holdings.find((h) => h.symbol === sym)?.qty || 0;
-  if (s === "BUY" && ledger.cash < amount) {
-    return res.status(400).json({ ok: false, message: "Insufficient cash for this buy order.", cash: ledger.cash, required: amount });
-  }
-  if (s === "SELL" && holdingQty < quantity) {
-    return res.status(400).json({ ok: false, message: "Insufficient holdings for this sell order.", holdingQty, requested: quantity });
-  }
-
-  const cashAfter = s === "BUY" ? ledger.cash - amount : ledger.cash + amount;
-  const createdAt = new Date().toISOString();
-  try {
-    await appendTransactionRow({
-      createdAt,
-      userId: id,
-      type: s,
-      symbol: sym,
-      qty: quantity,
-      price,
-      amount,
-      cashAfter,
-      note: `Trade executed at latest PSX close.`,
-      metaJson: { psxTs: priceInfo.ts, currency: "USD" },
-    });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to store trade in transaction sheet.",
-      details: String(error.message || error),
-    });
-  }
-
-  return res.status(201).json({ ok: true, trade: { createdAt, userId: id, side: s, symbol: sym, qty: quantity, price, amount, cashAfter } });
-});
-
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
@@ -2351,496 +1630,129 @@ function buildNetWorthProjection({
   return series;
 }
 
-app.post("/api/forecast", async (req, res) => {
-  const { userId } = req.body || {};
-  const id = String(userId || "").trim();
-  if (!id) return res.status(400).json({ ok: false, message: "userId is required." });
-
-  let profile = null;
-  try {
-    profile = await readProfileFromSheet(id);
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read profile from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  if (!isProfileComplete(profile)) {
-    return res.status(400).json({ ok: false, message: "Profile is incomplete. Complete onboarding first." });
-  }
-
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(id, { limit: 800 });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read transactions from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  const ledger = computeLedgerState(transactions);
-  const priced = await priceHoldings(ledger.holdings);
-
-  const otherAssetsTotal = Number(profile?.assets?.total || 0) || 0;
-  const otherLiabilitiesTotal = Number(profile?.liabilities?.total || 0) || 0;
-  const cashOutsidePortfolio = Number(profile.currentCash || 0) || 0;
-
-  const netWorthNow = cashOutsidePortfolio + ledger.cash + priced.totalValue + otherAssetsTotal - otherLiabilitiesTotal;
-  const monthlyNetCashflow = (Number(profile.monthlyIncome || 0) || 0) - (Number(profile.monthlyExpenses || 0) || 0);
-  const investableNow = ledger.cash + priced.totalValue;
-
-  const base = buildNetWorthProjection({
-    baseNetWorthNow: netWorthNow,
-    monthlyNetCashflow,
-    investableNow,
-    annualReturn: 0.06,
-    expenseShock: 0,
-  });
-  const best = buildNetWorthProjection({
-    baseNetWorthNow: netWorthNow,
-    monthlyNetCashflow,
-    investableNow,
-    annualReturn: 0.09,
-    expenseShock: 0,
-  });
-  const worst = buildNetWorthProjection({
-    baseNetWorthNow: netWorthNow,
-    monthlyNetCashflow,
-    investableNow,
-    annualReturn: 0.03,
-    expenseShock: 0.15,
-  });
-
-  // Optional narrative via Gemini (best effort).
-  let narrative = "";
-  const ai = getGeminiClient();
-  if (ai) {
-    try {
-      const prompt = [
-        "You are a financial future simulator assistant for an MVP app.",
-        "Summarize the forecast results clearly as best/base/worst scenarios.",
-        "Be realistic: no guaranteed returns, mention uncertainty and key drivers.",
-        "Return 6-10 bullet points, each 1-2 sentences.",
-        "",
-        `User monthly income: ${Number(profile.monthlyIncome).toFixed(2)}`,
-        `User monthly expenses: ${Number(profile.monthlyExpenses).toFixed(2)}`,
-        `Net worth now: ${netWorthNow.toFixed(2)}`,
-        `Investable now (cash+portfolio): ${investableNow.toFixed(2)}`,
-        `Other assets total: ${otherAssetsTotal.toFixed(2)}`,
-        `Other liabilities total: ${otherLiabilitiesTotal.toFixed(2)}`,
-        "",
-        `Base net worth in 10y: ${base[base.length - 1].value}`,
-        `Best net worth in 10y: ${best[best.length - 1].value}`,
-        `Worst net worth in 10y: ${worst[worst.length - 1].value}`,
-      ].join("\n");
-
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: { temperature: 0.3 },
-      });
-      narrative = String(response?.text || "").trim();
-    } catch {
-      narrative = "";
-    }
-  }
-
-  return res.json({
-    ok: true,
-    now: {
-      netWorth: netWorthNow,
-      investable: investableNow,
-      cashOutsidePortfolio,
-      ledgerCash: ledger.cash,
-      portfolioValue: priced.totalValue,
-      otherAssetsTotal,
-      otherLiabilitiesTotal,
-      monthlyNetCashflow,
-      positions: priced.positions,
-    },
-    series: { best, base, worst },
-    narrative,
-  });
+registerHealthRoutes(app, {
+  getGoogleConfig,
+  getTransactionalSheetConfig,
+  getProfilesSheetConfig,
+  getGeminiClient,
+  GEMINI_MODEL,
 });
 
-app.get("/api/model-prediction/:symbol", (req, res) => {
-  const symbol = String(req.params.symbol || "").trim().toUpperCase();
-  if (!symbol) return res.status(400).json({ ok: false, message: "symbol is required." });
-
-  const modelData = readModelPredictions();
-  if (!modelData) {
-    return res.status(404).json({
-      ok: false,
-      message:
-        "Model predictions are not available yet. Run `python train_psx_model.py` to generate backend/data/psx_model_symbol_predictions.json.",
-    });
-  }
-
-  const prediction = modelData.predictions.find(
-    (row) => String(row?.symbol || "").trim().toUpperCase() === symbol
-  );
-  if (!prediction) {
-    return res.status(404).json({
-      ok: false,
-      message: `No model prediction found for symbol ${symbol}.`,
-    });
-  }
-
-  return res.json({
-    ok: true,
-    symbol,
-    prediction,
-    model: modelData.model,
-    threshold: modelData.threshold,
-    generatedAt: modelData.generated_at,
-  });
+registerAuthRoutes(app, {
+  createUserAccount,
+  safeUser,
+  readProfileFromSheet,
+  upsertProfileToSheet,
+  readTransactionsForUser,
+  computeLedgerState,
+  DEFAULT_STARTING_INVESTMENT_USD,
+  appendTransactionRow,
+  readUsersFromSheet,
+  resolveLoginLocation,
+  createPasswordResetToken,
+  PORT,
+  sendAuthEmail,
+  buildLoginEmailHtml,
+  verifyPasswordResetToken,
+  stablePasswordMarker,
+  bcrypt,
+  updateUserPasswordInSheet,
+  escapeHtml,
 });
 
-app.get("/api/settings/:userId", async (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
-  let profile = null;
-  try {
-    profile = await readProfileFromSheet(userId);
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to read settings from Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  const settings = profile?.extras?.settings || {
-    currency: "USD",
-    timezone: "UTC",
-    riskMode: "moderate",
-    notifications: true,
-  };
-  return res.json({ ok: true, settings });
+registerActivitiesRoutes(app, {
+  readActivities,
+  writeActivities,
+  readUsersFromSheet,
+  crypto,
 });
 
-app.post("/api/settings/:userId", async (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
-  const incoming = req.body?.settings && typeof req.body.settings === "object" ? req.body.settings : {};
-
-  let profile = null;
-  try {
-    profile = await readProfileFromSheet(userId);
-  } catch {
-    profile = null;
-  }
-  const nextProfile = {
-    userId,
-    age: profile?.age ?? null,
-    country: profile?.country || "",
-    monthlyIncome: profile?.monthlyIncome ?? null,
-    monthlyExpenses: profile?.monthlyExpenses ?? null,
-    currentCash: profile?.currentCash ?? null,
-    assets: profile?.assets || {},
-    liabilities: profile?.liabilities || {},
-    extras: {
-      ...(profile?.extras || {}),
-      settings: {
-        currency: String(incoming.currency || profile?.extras?.settings?.currency || "USD"),
-        timezone: String(incoming.timezone || profile?.extras?.settings?.timezone || "UTC"),
-        riskMode: String(incoming.riskMode || profile?.extras?.settings?.riskMode || "moderate"),
-        notifications:
-          typeof incoming.notifications === "boolean"
-            ? incoming.notifications
-            : Boolean(profile?.extras?.settings?.notifications ?? true),
-      },
-    },
-    updatedAt: new Date().toISOString(),
-    createdAt: profile?.createdAt || new Date().toISOString(),
-  };
-  try {
-    await upsertProfileToSheet(nextProfile);
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: "Failed to save settings to Google Sheet.",
-      details: String(error.message || error),
-    });
-  }
-  return res.json({ ok: true, settings: nextProfile.extras.settings });
+registerAdvisorRoutes(app, {
+  getGeminiClient,
+  readUsersFromSheet,
+  checkAndConsumeAdvisorPrompt,
+  formatDurationMs,
+  ADVISOR_MIN_INTERVAL_MS,
+  ADVISOR_MAX_IN_WINDOW,
+  ADVISOR_WINDOW_MS,
+  readActivities,
+  buildPortfolioSummary,
+  readProfileFromSheet,
+  readTransactionsForUser,
+  computeLedgerState,
+  buildFinancialProfileSummary,
+  buildLedgerSummary,
+  isProfileComplete,
+  extractGroundingSources,
+  isGeminiQuotaError,
+  classifyGeminiError,
+  GEMINI_MODEL,
 });
 
-app.get("/api/market/forex/:pair", async (req, res) => {
-  const pair = String(req.params.pair || "").trim().toUpperCase();
-  if (!/^[A-Z]{6}$/.test(pair)) {
-    return res.status(400).json({ ok: false, message: "pair must be 6 letters, e.g. EURUSD" });
-  }
-  try {
-    const data = await fetchForexFromProvider(pair);
-    return res.json({ ok: true, ...data, providerFallback: false });
-  } catch (error) {
-    const start = 1 + (hashString(pair) % 50) / 100;
-    const series = generateSyntheticSeries(`forex:${pair}`, { points: 160, start, volatility: 0.0015 });
-    return res.json({
-      ok: true,
-      pair,
-      series,
-      latest: series[series.length - 1],
-      source: "synthetic-fallback",
-      providerFallback: true,
-      details: String(error.message || error),
-    });
-  }
+registerProfileRoutes(app, {
+  readProfileFromSheet,
+  isProfileComplete,
+  upsertProfileToSheet,
 });
 
-app.get("/api/market/options/:symbol", async (req, res) => {
-  const symbol = String(req.params.symbol || "").trim().toUpperCase();
-  if (!symbol) return res.status(400).json({ ok: false, message: "symbol is required." });
-  try {
-    const data = await fetchOptionsFromProvider(symbol);
-    return res.json({ ok: true, ...data, providerFallback: false });
-  } catch (error) {
-    const seed = hashString(symbol);
-    const spot = 80 + (seed % 400) / 5;
-    const expiries = [14, 30, 60].map((d) => {
-      const dt = new Date();
-      dt.setDate(dt.getDate() + d);
-      return dt.toISOString().slice(0, 10);
-    });
-    const strikes = [-0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15].map((p) => Number((spot * (1 + p)).toFixed(2)));
-    const chain = [];
-    for (const expiry of expiries) {
-      for (const strike of strikes) {
-        const moneyness = Math.abs((strike - spot) / spot);
-        const timeValue = Math.max(0.5, (60 - Math.abs(new Date(expiry) - Date.now()) / (1000 * 60 * 60 * 24)) * 0.03);
-        const basePremium = Math.max(0.2, spot * (0.015 + moneyness * 0.2) + timeValue);
-        const callPremium = Number(basePremium.toFixed(2));
-        const putPremium = Number((basePremium * (0.95 + moneyness)).toFixed(2));
-        chain.push({
-          symbol,
-          expiry,
-          strike,
-          callPremium,
-          putPremium,
-        });
-      }
-    }
-    const series = generateSyntheticSeries(`options:${symbol}`, { points: 140, start: spot, volatility: 0.0035 });
-    return res.json({
-      ok: true,
-      symbol,
-      spot: Number(spot.toFixed(2)),
-      chain,
-      series,
-      source: "synthetic-fallback",
-      providerFallback: true,
-      details: String(error.message || error),
-    });
-  }
+registerOnboardingRoutes(app, {
+  readProfileFromSheet,
+  upsertProfileToSheet,
+  readTransactionsForUser,
+  computeLedgerState,
+  DEFAULT_STARTING_INVESTMENT_USD,
+  appendTransactionRow,
+  isProfileComplete,
 });
 
-app.post("/api/trade/forex", async (req, res) => {
-  const { userId, pair, side, units } = req.body || {};
-  const id = String(userId || "").trim();
-  const asset = String(pair || "").trim().toUpperCase();
-  const direction = String(side || "").trim().toUpperCase();
-  const qty = Number(units);
-  if (!id || !/^[A-Z]{6}$/.test(asset) || !["BUY", "SELL"].includes(direction) || !Number.isFinite(qty) || qty <= 0) {
-    return res.status(400).json({ ok: false, message: "userId, pair(6 letters), side(BUY/SELL), units are required." });
-  }
-
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(id, { limit: 800 });
-  } catch (error) {
-    return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
-  }
-  const ledger = computeLedgerState(transactions);
-  let mid = null;
-  let source = "synthetic-fallback";
-  try {
-    const quote = await fetchForexFromProvider(asset);
-    mid = Number(quote?.latest?.value);
-    source = quote?.source || "frankfurter";
-  } catch {
-    const quotes = generateSyntheticSeries(`forex:${asset}`, {
-      points: 2,
-      start: 1 + (hashString(asset) % 50) / 100,
-      volatility: 0.0015,
-    });
-    mid = Number(quotes[quotes.length - 1].value);
-  }
-  if (!Number.isFinite(mid)) {
-    return res.status(502).json({ ok: false, message: "Failed to fetch executable forex quote." });
-  }
-  const spreadBps = 8;
-  const price = direction === "BUY" ? mid * (1 + spreadBps / 10000) : mid * (1 - spreadBps / 10000);
-  const amount = price * qty;
-
-  if (direction === "BUY" && ledger.cash < amount) {
-    return res.status(400).json({ ok: false, message: "Insufficient cash.", cash: ledger.cash, required: amount });
-  }
-  const cashAfter = direction === "BUY" ? ledger.cash - amount : ledger.cash + amount;
-  const type = direction === "BUY" ? "FOREX_BUY" : "FOREX_SELL";
-  const createdAt = new Date().toISOString();
-  try {
-    await appendTransactionRow({
-      createdAt,
-      userId: id,
-      type,
-      symbol: asset,
-      qty,
-      price,
-      amount,
-      cashAfter,
-      note: `Forex execution (${source}).`,
-      metaJson: { assetClass: "forex", side: direction, spreadBps, source },
-    });
-  } catch (error) {
-    return res.status(500).json({ ok: false, message: "Failed to persist forex trade.", details: String(error.message || error) });
-  }
-  return res.status(201).json({
-    ok: true,
-    trade: { userId: id, pair: asset, side: direction, units: qty, price, amount, cashAfter, source },
-  });
+registerPortfolioRoutes(app, {
+  readProfileFromSheet,
+  readTransactionsForUser,
+  isProfileComplete,
+  computeLedgerState,
 });
 
-app.post("/api/trade/options", async (req, res) => {
-  const { userId, symbol, side, contractType, strike, expiry, contracts, premium } = req.body || {};
-  const id = String(userId || "").trim();
-  const sym = String(symbol || "").trim().toUpperCase();
-  const direction = String(side || "").trim().toUpperCase();
-  const optType = String(contractType || "").trim().toUpperCase();
-  const qty = Number(contracts);
-  const strikeNum = Number(strike);
-  const premiumNum = Number(premium);
-  const lotSize = 100;
-  if (!id || !sym || !["BUY", "SELL"].includes(direction) || !["CALL", "PUT"].includes(optType) || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(strikeNum) || !expiry) {
-    return res.status(400).json({ ok: false, message: "userId, symbol, side, contractType, strike, expiry, contracts are required." });
-  }
-
-  let computedPremium = Number.isFinite(premiumNum) && premiumNum > 0 ? premiumNum : null;
-  let source = "synthetic-fallback";
-  try {
-    const snapshot = await fetchOptionsFromProvider(sym);
-    const match = snapshot.chain.find(
-      (entry) =>
-        String(entry.expiry) === String(expiry) &&
-        Number(entry.strike) === Number(strikeNum)
-    );
-    if (match) {
-      const premiumFromChain = optType === "CALL" ? match.callPremium : match.putPremium;
-      if (Number.isFinite(Number(premiumFromChain)) && Number(premiumFromChain) > 0) {
-        computedPremium = Number(premiumFromChain);
-        source = snapshot.source || "yahoo";
-      }
-    }
-  } catch {
-    // fallback continues
-  }
-  if (!Number.isFinite(computedPremium) || computedPremium <= 0) {
-    computedPremium = Math.max(0.5, strikeNum * 0.02);
-  }
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(id, { limit: 800 });
-  } catch (error) {
-    return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
-  }
-  const ledger = computeLedgerState(transactions);
-  const amount = computedPremium * qty * lotSize;
-  if (direction === "BUY" && ledger.cash < amount) {
-    return res.status(400).json({ ok: false, message: "Insufficient cash.", cash: ledger.cash, required: amount });
-  }
-  const cashAfter = direction === "BUY" ? ledger.cash - amount : ledger.cash + amount;
-  const createdAt = new Date().toISOString();
-  const optionSymbol = `${sym}_${expiry}_${strikeNum}_${optType}`;
-  try {
-    await appendTransactionRow({
-      createdAt,
-      userId: id,
-      type: direction === "BUY" ? "OPTION_BUY" : "OPTION_SELL",
-      symbol: optionSymbol,
-      qty,
-      price: computedPremium,
-      amount,
-      cashAfter,
-      note: `Option premium execution (${source}).`,
-      metaJson: {
-        assetClass: "option",
-        underlying: sym,
-        expiry,
-        strike: strikeNum,
-        optionType: optType,
-        lotSize,
-        source,
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({ ok: false, message: "Failed to persist options trade.", details: String(error.message || error) });
-  }
-  return res.status(201).json({
-    ok: true,
-    trade: {
-      userId: id,
-      symbol: sym,
-      side: direction,
-      contractType: optType,
-      strike: strikeNum,
-      expiry,
-      contracts: qty,
-      premium: computedPremium,
-      amount,
-      cashAfter,
-      source,
-    },
-  });
+registerTradeRoutes(app, {
+  readTransactionsForUser,
+  computeLedgerState,
+  fetchPsxLatestPrice,
+  appendTransactionRow,
+  fetchForexFromProvider,
+  hashString,
+  generateSyntheticSeries,
+  fetchOptionsFromProvider,
 });
 
-app.get("/api/risk/:userId", async (req, res) => {
-  const userId = String(req.params.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
-  let transactions = [];
-  try {
-    transactions = await readTransactionsForUser(userId, { limit: 1200 });
-  } catch (error) {
-    return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
-  }
-  const byAsset = {
-    stock: 0,
-    forex: 0,
-    option: 0,
-    other: 0,
-  };
-  const bySymbolAmount = new Map();
-  for (const tx of transactions) {
-    const assetClass = tx.metaJson?.assetClass || (String(tx.type || "").includes("FOREX") ? "forex" : String(tx.type || "").includes("OPTION") ? "option" : ["BUY", "SELL", "PORTFOLIO_IMPORT"].includes(String(tx.type || "").toUpperCase()) ? "stock" : "other");
-    const amount = Math.abs(Number(tx.amount || 0));
-    if (!Number.isFinite(amount)) continue;
-    if (!byAsset[assetClass]) byAsset[assetClass] = 0;
-    byAsset[assetClass] += amount;
-    const s = String(tx.symbol || "UNKNOWN");
-    bySymbolAmount.set(s, (bySymbolAmount.get(s) || 0) + amount);
-  }
-  const totalExposure = Object.values(byAsset).reduce((a, b) => a + b, 0);
-  const topSymbols = [...bySymbolAmount.entries()]
-    .map(([symbol, exposure]) => ({ symbol, exposure }))
-    .sort((a, b) => b.exposure - a.exposure)
-    .slice(0, 5);
-  const concentration = topSymbols.length ? topSymbols[0].exposure / Math.max(1, totalExposure) : 0;
-  const riskScore = clamp(Math.round(100 - concentration * 55 - (byAsset.option / Math.max(1, totalExposure)) * 20 - (byAsset.forex / Math.max(1, totalExposure)) * 10), 15, 95);
-  return res.json({
-    ok: true,
-    risk: {
-      score: riskScore,
-      totalExposure,
-      concentration: Number((concentration * 100).toFixed(2)),
-      assetMix: Object.fromEntries(Object.entries(byAsset).map(([k, v]) => [k, Number(v.toFixed(2))])),
-      topSymbols,
-      shocks: {
-        equityMinus10Pct: Number((totalExposure * 0.1).toFixed(2)),
-        fxMinus5Pct: Number((byAsset.forex * 0.05).toFixed(2)),
-        volSpikeOptionsMinus20Pct: Number((byAsset.option * 0.2).toFixed(2)),
-      },
-    },
-  });
+registerForecastRoutes(app, {
+  readProfileFromSheet,
+  isProfileComplete,
+  readTransactionsForUser,
+  computeLedgerState,
+  priceHoldings,
+  buildNetWorthProjection,
+  getGeminiClient,
+  GEMINI_MODEL,
+});
+
+registerModelPredictionRoutes(app, {
+  readModelPredictions,
+});
+
+registerSettingsRoutes(app, {
+  readProfileFromSheet,
+  upsertProfileToSheet,
+});
+
+registerMarketRoutes(app, {
+  fetchForexFromProvider,
+  hashString,
+  generateSyntheticSeries,
+  fetchOptionsFromProvider,
+});
+
+registerRiskRoutes(app, {
+  readTransactionsForUser,
+  clamp,
 });
 
 app.listen(PORT, () => {
