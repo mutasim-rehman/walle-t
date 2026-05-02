@@ -33,7 +33,26 @@ module.exports = function registerAuthRoutes(app, deps) {
         details: result.details,
       });
     }
-    return res.json({ ok: true, user: safeUser(result.user) });
+    const user = result.user;
+    // Credit $10,000 starting balance
+    try {
+      const existingTx = await readTransactionsForUser(user.id, { limit: 10 });
+      const hasDeposit = existingTx.some((tx) => String(tx.type || "").toUpperCase() === "DEPOSIT");
+      if (!hasDeposit) {
+        await appendTransactionRow({
+          createdAt: new Date().toISOString(),
+          userId: user.id,
+          type: "DEPOSIT",
+          amount: DEFAULT_STARTING_INVESTMENT_USD,
+          cashAfter: DEFAULT_STARTING_INVESTMENT_USD,
+          note: "Default starting investment.",
+          metaJson: { currency: "USD" },
+        });
+      }
+    } catch (err) {
+      console.error("Failed to credit starting balance:", err.message || err);
+    }
+    return res.json({ ok: true, user: safeUser(user) });
   });
 
   app.post("/api/auth/signup-complete", async (req, res) => {
