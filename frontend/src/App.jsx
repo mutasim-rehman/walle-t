@@ -15,6 +15,7 @@ const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const AdvisorPage = lazy(() => import('./pages/AdvisorPage'));
 const CompanyPrediction = lazy(() => import('./pages/CompanyPrediction'));
+const AdminPanel = lazy(() => import('./pages/AdminPanel'));
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -122,6 +123,7 @@ function App() {
                 </ProtectedRoute>
               )}
             />
+            <Route path="/admin" element={<AdminPanel />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Suspense>

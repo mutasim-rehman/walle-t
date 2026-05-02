@@ -21,6 +21,7 @@ const registerSettingsRoutes = require("./routes/settingsRoutes");
 const registerMarketRoutes = require("./routes/marketRoutes");
 const registerTradeRoutes = require("./routes/tradeRoutes");
 const registerRiskRoutes = require("./routes/riskRoutes");
+const registerAdminRoutes = require("./routes/adminRoutes");
 
 const projectRoot = path.resolve(__dirname, "..");
 const dotenvCandidates = [".env", "env"];
@@ -1082,6 +1083,77 @@ async function appendUserToSheet(user) {
   throw lastError || new Error("Unknown Google Sheets append error");
 }
 
+async function deleteUserFromSheet(userId) {
+  const { sheetId, clientEmail, privateKey, sheetName } = getGoogleConfig();
+  if (!sheetId || !clientEmail || !privateKey) {
+    throw new Error("Google Sheets env vars are incomplete");
+  }
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+  const candidateRanges = [];
+  if (sheetName) candidateRanges.push(`${sheetName}!A:F`);
+  candidateRanges.push("Users!A:F");
+  candidateRanges.push("Sheet1!A:F");
+  candidateRanges.push("A:F");
+
+  let rows = [];
+  let selectedSheetName = sheetName || "Users";
+  let lastError = null;
+  for (const range of candidateRanges) {
+    try {
+      const resp = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range });
+      rows = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      selectedSheetName = range.includes("!") ? range.split("!")[0] : selectedSheetName;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (!rows.length && lastError) throw lastError;
+
+  let rowIndex = null;
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i] || [];
+    const id = String(row[4] || "").trim();
+    if (String(row[2] || "").toLowerCase() === "email") continue;
+    if (id && id === String(userId).trim()) {
+      rowIndex = i + 1; // 1-indexed
+      break;
+    }
+  }
+  if (rowIndex == null) throw new Error("User row not found for deletion.");
+
+  // Get the sheetId (tab id) for batchUpdate
+  const spreadsheetMeta = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
+  const tabSheet = (spreadsheetMeta.data.sheets || []).find(
+    (s) => String(s.properties?.title || "").toLowerCase() === selectedSheetName.toLowerCase()
+  );
+  const tabId = tabSheet?.properties?.sheetId ?? 0;
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: tabId,
+              dimension: "ROWS",
+              startIndex: rowIndex - 1,
+              endIndex: rowIndex,
+            },
+          },
+        },
+      ],
+    },
+  });
+  usersCache = { users: null, fetchedAt: 0 };
+}
+
 function safeUser(user) {
   return {
     id: user.id,
@@ -1753,6 +1825,15 @@ registerMarketRoutes(app, {
 registerRiskRoutes(app, {
   readTransactionsForUser,
   clamp,
+});
+
+registerAdminRoutes(app, {
+  readUsersFromSheet,
+  readTransactionsForUser,
+  computeLedgerState,
+  readProfileFromSheet,
+  deleteUserFromSheet,
+  priceHoldings,
 });
 
 app.listen(PORT, () => {
