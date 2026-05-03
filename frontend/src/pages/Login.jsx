@@ -1,7 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, User, ArrowRight, Building, ShieldCheck, Mail, Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
+import {
+  Lock,
+  User,
+  ArrowRight,
+  Building,
+  ShieldCheck,
+  Mail,
+  Eye,
+  EyeOff,
+  Plus,
+  Trash2,
+  ArrowLeft,
+  KeyRound,
+} from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
+import { requestForgotPassword } from '../lib/api';
 
 function toNum(v) {
   const s = String(v ?? '').trim();
@@ -20,6 +34,7 @@ function validateSignupPassword(password) {
 
 const Login = () => {
   const [mode, setMode] = useState('login');
+  const [loginPanel, setLoginPanel] = useState('credentials');
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -28,6 +43,7 @@ const Login = () => {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [isError, setIsError] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
   const [age, setAge] = useState('');
   const [country, setCountry] = useState('');
   const [monthlyIncome, setMonthlyIncome] = useState('');
@@ -45,33 +61,70 @@ const Login = () => {
     if (authReady && isAuthenticated) navigate('/dashboard');
   }, [authReady, isAuthenticated, navigate]);
 
+  const clearFeedback = () => {
+    setMessage('');
+    setIsError(false);
+    setIsSuccess(false);
+  };
+
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    if (!username.trim()) {
+      setIsError(true);
+      setIsSuccess(false);
+      setMessage('Enter the username or email for your account.');
+      return;
+    }
+    setBusy(true);
+    clearFeedback();
+    try {
+      const data = await requestForgotPassword({ usernameOrEmail: username.trim() });
+      setMessage(data?.message || 'Check your email for reset instructions.');
+      setIsSuccess(true);
+      setIsError(false);
+    } catch (err) {
+      setIsSuccess(false);
+      setIsError(true);
+      setMessage(err?.message || 'Could not send reset email. Try again later.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (busy) return;
+    setIsSuccess(false);
     if (!username.trim() || !password.trim()) {
       setIsError(true);
+      setIsSuccess(false);
       setMessage('Username/email and password are required.');
       return;
     }
     if (mode === 'signup') {
       if (!email.trim()) {
         setIsError(true);
+        setIsSuccess(false);
         setMessage('Email is required.');
         return;
       }
       const pwErr = validateSignupPassword(password);
       if (pwErr) {
         setIsError(true);
+        setIsSuccess(false);
         setMessage(pwErr);
         return;
       }
       if (password !== confirmPassword) {
         setIsError(true);
+        setIsSuccess(false);
         setMessage('Passwords do not match.');
         return;
       }
       if (toNum(age) == null || !country.trim() || toNum(monthlyIncome) == null || toNum(monthlyExpenses) == null || toNum(currentCash) == null) {
         setIsError(true);
+        setIsSuccess(false);
         setMessage('For signup, fill required profile fields (age, country, income, expenses, current cash).');
         return;
       }
@@ -108,6 +161,7 @@ const Login = () => {
       setBusy(false);
       if (!result.ok) {
         setIsError(true);
+        setIsSuccess(false);
         setMessage(result.message);
         return;
       }
@@ -118,6 +172,7 @@ const Login = () => {
       setBusy(false);
       if (!result.ok) {
         setIsError(true);
+        setIsSuccess(false);
         setMessage(result.message);
         return;
       }
@@ -130,7 +185,7 @@ const Login = () => {
       {/* Background Decor */}
       <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '34vh', background: 'linear-gradient(135deg, #2563eb, #020617)', zIndex: 0 }} />
       
-      <div className={`finance-card animate-fade-in ${isError ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: mode === 'signup' ? '620px' : '460px', padding: '48px 40px', zIndex: 10, position: 'relative', borderRadius: 14 }}>
+      <div className={`finance-card animate-fade-in ${isError && !isSuccess ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: mode === 'signup' ? '620px' : '460px', padding: '48px 40px', zIndex: 10, position: 'relative', borderRadius: 14 }}>
         
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '32px' }}>
           <div style={{ background: 'rgba(59,130,246,0.12)', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid var(--border-color)' }}>
@@ -138,10 +193,80 @@ const Login = () => {
           </div>
           <h2 style={{ fontSize: '1.9rem', marginBottom: '8px' }}>Walle-T Terminal</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
-            {mode === 'signup' ? 'Create your account' : 'Secure Financial Simulation Engine'}
+            {mode === 'signup'
+              ? 'Create your account'
+              : loginPanel === 'forgot'
+                ? 'Reset access via email'
+                : 'Secure Financial Simulation Engine'}
           </p>
         </div>
 
+        {mode === 'login' && loginPanel === 'forgot' ? (
+        <form onSubmit={handleForgotSubmit}>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', lineHeight: 1.55, marginBottom: 18 }}>
+            Enter your username or email. If we recognize the account, we will send a time-limited link to set a new password.
+          </p>
+          <div className="input-group">
+            <label className="input-label" htmlFor="forgot-identity">
+              Username or email
+            </label>
+            <div style={{ position: 'relative' }}>
+              <KeyRound size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)' }} />
+              <input
+                id="forgot-identity"
+                type="text"
+                autoComplete="username"
+                className="input-field"
+                style={{ paddingLeft: '44px', borderColor: isError && !isSuccess ? 'var(--status-negative)' : '' }}
+                placeholder="Same as login"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+          </div>
+          {message && (
+            <div
+              style={{
+                background: isSuccess ? 'var(--status-positive-bg)' : 'var(--status-negative-bg)',
+                padding: '10px 14px',
+                borderRadius: '6px',
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'flex-start',
+                marginBottom: '20px',
+                marginTop: 4,
+              }}
+            >
+              <ShieldCheck size={16} color={isSuccess ? 'var(--status-positive)' : 'var(--status-negative)'} style={{ flexShrink: 0, marginTop: 2 }} />
+              <p
+                style={{
+                  color: isSuccess ? 'var(--status-positive)' : 'var(--status-negative)',
+                  fontSize: '0.85rem',
+                  fontWeight: 500,
+                  margin: 0,
+                  lineHeight: 1.45,
+                }}
+              >
+                {message}
+              </p>
+            </div>
+          )}
+          <button type="submit" className="btn-primary" disabled={busy} style={{ width: '100%', marginTop: message ? 0 : 8, padding: '14px', fontWeight: 700 }}>
+            {busy ? 'Sending…' : 'Email reset link'} <Mail size={18} />
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ width: '100%', marginTop: '10px' }}
+            onClick={() => {
+              setLoginPanel('credentials');
+              clearFeedback();
+            }}
+          >
+            <ArrowLeft size={16} style={{ marginRight: 6 }} aria-hidden /> Back to sign in
+          </button>
+        </form>
+        ) : (
         <form onSubmit={handleSubmit}>
           {mode === 'signup' && (
             <div className="input-group">
@@ -151,7 +276,7 @@ const Login = () => {
                 <input
                   type="email"
                   className="input-field"
-                  style={{ paddingLeft: '44px', borderColor: isError ? 'var(--status-negative)' : '' }}
+                  style={{ paddingLeft: '44px', borderColor: isError && !isSuccess ? 'var(--status-negative)' : '' }}
                   placeholder="Enter your email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -205,7 +330,7 @@ const Login = () => {
               <input
                 type="text"
                 className="input-field"
-                style={{ paddingLeft: '44px', borderColor: isError ? 'var(--status-negative)' : '' }}
+                style={{ paddingLeft: '44px', borderColor: isError && !isSuccess ? 'var(--status-negative)' : '' }}
                 placeholder={mode === 'signup' ? 'Choose a username' : 'Enter username or email'}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -220,7 +345,7 @@ const Login = () => {
               <input
                 type={showPassword ? 'text' : 'password'}
                 className="input-field"
-                style={{ paddingLeft: '44px', paddingRight: '44px', borderColor: isError ? 'var(--status-negative)' : '' }}
+                style={{ paddingLeft: '44px', paddingRight: '44px', borderColor: isError && !isSuccess ? 'var(--status-negative)' : '' }}
                 placeholder={mode === 'signup' ? 'Min 8 chars, include a number and symbol' : 'Enter password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -244,7 +369,7 @@ const Login = () => {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   className="input-field"
-                  style={{ paddingLeft: '44px', paddingRight: '12px', borderColor: isError ? 'var(--status-negative)' : '' }}
+                  style={{ paddingLeft: '44px', paddingRight: '12px', borderColor: isError && !isSuccess ? 'var(--status-negative)' : '' }}
                   placeholder="Re-enter password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
@@ -253,10 +378,53 @@ const Login = () => {
             </div>
           )}
 
+          {mode === 'login' && (
+            <div style={{ marginTop: 4, marginBottom: mode === 'login' ? 2 : 0 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  clearFeedback();
+                  setLoginPanel('forgot');
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  color: 'var(--brand-primary)',
+                  fontSize: '0.88rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 3,
+                }}
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
+
           {message && (
-            <div style={{ background: 'var(--status-negative-bg)', padding: '10px 14px', borderRadius: '6px', display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '20px' }}>
-               <ShieldCheck size={16} color={isError ? 'var(--status-negative)' : 'var(--status-positive)'} />
-               <p style={{ color: isError ? 'var(--status-negative)' : 'var(--status-positive)', fontSize: '0.85rem', fontWeight: 500 }}>{message}</p>
+            <div
+              style={{
+                background: isSuccess ? 'var(--status-positive-bg)' : 'var(--status-negative-bg)',
+                padding: '10px 14px',
+                borderRadius: '6px',
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'center',
+                marginBottom: '20px',
+              }}
+            >
+              <ShieldCheck size={16} color={isSuccess ? 'var(--status-positive)' : 'var(--status-negative)'} />
+              <p
+                style={{
+                  color: isSuccess ? 'var(--status-positive)' : 'var(--status-negative)',
+                  fontSize: '0.85rem',
+                  fontWeight: 500,
+                }}
+              >
+                {message}
+              </p>
             </div>
           )}
 
@@ -270,7 +438,9 @@ const Login = () => {
             style={{ width: '100%', marginTop: '10px' }}
             onClick={() => {
               setMode((m) => (m === 'login' ? 'signup' : 'login'));
+              setLoginPanel('credentials');
               setIsError(false);
+              setIsSuccess(false);
               setMessage('');
               setPassword('');
               setConfirmPassword('');
@@ -285,6 +455,7 @@ const Login = () => {
             </p>
           </div>
         </form>
+        )}
 
       </div>
     </div>

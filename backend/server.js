@@ -43,6 +43,9 @@ function stripTrailingSlash(url) {
   return String(url || "").trim().replace(/\/+$/, "");
 }
 
+/** SPA origin for emailed links — Vercel rewrites `/api/*` here to Render (see frontend/vercel.json). Never use localhost:BACKEND_PORT in emails. */
+const DEFAULT_PUBLIC_APP_ORIGIN = stripTrailingSlash("https://walle-t.vercel.app");
+
 const PROVIDER_TIMEOUT_MS = Number(process.env.PROVIDER_TIMEOUT_MS || 10000);
 
 function sanitizeSheetCell(value) {
@@ -71,7 +74,11 @@ function fetchWithTimeout(url, options = {}, timeoutMs = PROVIDER_TIMEOUT_MS) {
 }
 
 /**
- * SPA origin exposed to users (e.g. Vercel). Email links hit this host; `/api/*` must rewrite to Render backend.
+ * SPA origin exposed to users (e.g. Vercel). Email links must use this host; `/api/*` rewrites proxy to Render.
+ * Defaults to the production SPA — not http://localhost:PORT — so users can open links from real email clients.
+ *
+ * Override with PUBLIC_APP_URL. For localhost-only emailed links during dev: EMAIL_PASSWORD_RESET_LINK_LOCALHOST=true
+ * and optionally LOCAL_FRONTEND_URL (default http://localhost:5173 with Vite proxy).
  */
 function resolvePublicAppOrigin() {
   const explicit = stripTrailingSlash(
@@ -89,12 +96,16 @@ function resolvePublicAppOrigin() {
     if (!localhostish) return bb;
   }
 
-  const onDeployHost =
-    process.env.NODE_ENV === "production" ||
-    Boolean(process.env.RENDER) ||
-    Boolean(process.env.RENDER_EXTERNAL_URL);
+  const localEmailLinks =
+    !IS_PRODUCTION &&
+    /^1|yes|true$/i.test(String(process.env.EMAIL_PASSWORD_RESET_LINK_LOCALHOST || "").trim());
+  if (localEmailLinks) {
+    const localFe = stripTrailingSlash(process.env.LOCAL_FRONTEND_URL || "");
+    if (/^https?:\/\//i.test(localFe)) return localFe;
+    return stripTrailingSlash("http://localhost:5173");
+  }
 
-  return onDeployHost ? "https://walle-t.vercel.app" : stripTrailingSlash(`http://localhost:${PORT}`);
+  return DEFAULT_PUBLIC_APP_ORIGIN;
 }
 
 const ACTIVITIES_PATH = path.resolve(__dirname, "data", "activities.json");
@@ -1742,6 +1753,26 @@ function buildLoginEmailHtml(user, { location, resetUrl }) {
   });
 }
 
+function buildForgotPasswordEmailHtml(user, { resetUrl }) {
+  const ttlMin = Math.max(1, Math.floor(PASSWORD_RESET_TOKEN_TTL_MS / 60000));
+  return emailLayout({
+    title: "Reset Your Password",
+    intro: `Hi <strong>${escapeHtml(user.username)}</strong>, we received a request to reset your Walle-T password.`,
+    bodyHtml: `
+      <p style="margin:0 0 14px 0;color:#374151;line-height:1.6;">
+        If you made this request, use the button below to choose a new password. If you did not request a reset,
+        you can ignore this email; your password will stay the same.
+      </p>
+      <a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#1d4ed8;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">
+        Reset Password
+      </a>
+      <p style="margin:12px 0 0 0;color:#6b7280;font-size:12px;line-height:1.5;">
+        For your security this link expires in ${ttlMin} minute${ttlMin === 1 ? "" : "s"} and can only be used once while your password is unchanged.
+      </p>
+    `,
+  });
+}
+
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
@@ -1987,6 +2018,7 @@ registerAuthRoutes(app, {
   createPasswordResetToken,
   sendAuthEmail,
   buildLoginEmailHtml,
+  buildForgotPasswordEmailHtml,
   verifyPasswordResetToken,
   stablePasswordMarker,
   bcrypt,

@@ -87,3 +87,8 @@ export async function apiPost(path, payload) {
     body: JSON.stringify(payload ?? {}),
   });
 }
+
+/** No auth required — used before login from the Forgot password screen. */
+export async function requestForgotPassword({ usernameOrEmail }) {
+  return apiPost('/auth/forgot-password', { usernameOrEmail });
+}

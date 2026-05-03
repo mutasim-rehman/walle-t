@@ -27,6 +27,7 @@ module.exports = function registerAuthRoutes(app, deps) {
     createPasswordResetToken,
     sendAuthEmail,
     buildLoginEmailHtml,
+    buildForgotPasswordEmailHtml,
     verifyPasswordResetToken,
     stablePasswordMarker,
     bcrypt,
@@ -202,6 +203,52 @@ module.exports = function registerAuthRoutes(app, deps) {
 
     const sessionToken = signSessionToken(found);
     return res.json({ ok: true, user: safeUser(found), sessionToken });
+  });
+
+  const GENERIC_FORGOT_RESPONSE = {
+    ok: true,
+    message:
+      "If an account exists for that username or email, password reset instructions have been sent. Check your inbox.",
+  };
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const { usernameOrEmail } = req.body || {};
+    const key = String(usernameOrEmail || "").trim().toLowerCase();
+    if (!key) {
+      return res.status(400).json({ ok: false, message: "username or email is required." });
+    }
+
+    let users = [];
+    try {
+      users = await readUsersFromSheet();
+    } catch (error) {
+      return res.status(500).json({
+        ok: false,
+        message: "Could not complete request. Please try again later.",
+        details: String(error.message || error),
+      });
+    }
+
+    const found = users.find(
+      (u) => String(u.email || "").toLowerCase() === key || String(u.username || "").toLowerCase() === key
+    );
+    if (!found) return res.json(GENERIC_FORGOT_RESPONSE);
+
+    try {
+      const resetToken = createPasswordResetToken(found);
+      const publicBase = resolvePublicAppOrigin();
+      const resetUrl = `${publicBase}/api/auth/password-reset?token=${encodeURIComponent(resetToken)}`;
+      const sent = await sendAuthEmail({
+        to: found.email,
+        subject: "Reset your Walle-T password",
+        html: buildForgotPasswordEmailHtml(found, { resetUrl }),
+      });
+      if (!sent) console.warn("[forgot-password] email not sent (SMTP not configured).");
+    } catch (error) {
+      console.error("[forgot-password] email failed:", error.message || error);
+    }
+
+    return res.json(GENERIC_FORGOT_RESPONSE);
   });
 
   app.get("/api/auth/password-reset", (req, res) => {
