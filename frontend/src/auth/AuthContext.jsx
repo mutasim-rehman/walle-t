@@ -4,6 +4,15 @@ import { API_BASE } from '../lib/api';
 const SESSION_KEY = 'wallet_session_v1';
 const API_FALLBACK_BASE = 'http://localhost:4001/api';
 
+function authApiBases() {
+  if (API_BASE === API_FALLBACK_BASE) return [API_BASE];
+  const localHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  if (!localHost) return [API_BASE];
+  return [API_BASE, API_FALLBACK_BASE];
+}
+
 const AuthContext = createContext(null);
 
 function readSession() {
@@ -21,7 +30,7 @@ function writeSession(user) {
 }
 
 async function postAuth(path, payload) {
-  const bases = API_BASE === API_FALLBACK_BASE ? [API_BASE] : [API_BASE, API_FALLBACK_BASE];
+  const bases = authApiBases();
   let lastError = null;
 
   for (const base of bases) {
@@ -56,7 +65,7 @@ export function AuthProvider({ children }) {
         if (!cancelled) setAuthReady(true);
         return;
       }
-      const bases = API_BASE === API_FALLBACK_BASE ? [API_BASE] : [API_BASE, API_FALLBACK_BASE];
+      const bases = authApiBases();
       let valid = false;
       for (const base of bases) {
         try {

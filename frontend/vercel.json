@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://walle-t-1.onrender.com/api/:path*"
+    },
+    {
+      "source": "/psx/:path*",
+      "destination": "https://dps.psx.com.pk/:path*"
+    }
+  ]
+}
