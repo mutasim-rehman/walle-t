@@ -126,14 +126,14 @@ const Login = () => {
   };
 
   return (
-    <div className="full-center" style={{ position: 'relative', padding: '40px 0', background: 'radial-gradient(circle at top right, #dbeafe 0%, #eff6ff 42%, #f8fafc 80%)' }}>
+    <div className="full-center" style={{ position: 'relative', padding: '40px 0', background: 'radial-gradient(circle at top right, #1e3a5f 0%, #0f172a 48%, #020617 92%)' }}>
       {/* Background Decor */}
-      <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '34vh', background: 'linear-gradient(135deg, #1d4ed8, #0f172a)', zIndex: 0 }} />
+      <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '34vh', background: 'linear-gradient(135deg, #2563eb, #020617)', zIndex: 0 }} />
       
       <div className={`finance-card animate-fade-in ${isError ? 'animate-shake' : ''}`} style={{ width: '100%', maxWidth: mode === 'signup' ? '620px' : '460px', padding: '48px 40px', zIndex: 10, position: 'relative', borderRadius: 14 }}>
         
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '32px' }}>
-          <div style={{ background: '#eff6ff', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #bfdbfe' }}>
+          <div style={{ background: 'rgba(59,130,246,0.12)', padding: '16px', borderRadius: '12px', marginBottom: '20px', border: '1px solid var(--border-color)' }}>
             <Building size={32} color="var(--brand-primary)" />
           </div>
           <h2 style={{ fontSize: '1.9rem', marginBottom: '8px' }}>Walle-T Terminal</h2>

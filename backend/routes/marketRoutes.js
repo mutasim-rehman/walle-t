@@ -1,5 +1,40 @@
 module.exports = function registerMarketRoutes(app, deps) {
-  const { fetchForexFromProvider, hashString, generateSyntheticSeries, fetchOptionsFromProvider } = deps;
+  const { fetchForexFromProvider, hashString, generateSyntheticSeries, fetchOptionsFromProvider, fetchPsxTimeseriesPayload } = deps;
+
+  app.get("/api/market/psx/eod/:symbol", async (req, res) => {
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!symbol) return res.status(400).json({ ok: false, message: "symbol is required." });
+    try {
+      const payload = await fetchPsxTimeseriesPayload("eod", symbol);
+      const rows = Array.isArray(payload?.data) ? payload.data : [];
+      return res.json({ ok: true, data: rows });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        message: "Failed to fetch PSX series.",
+        details: String(error.message || error),
+      });
+    }
+  });
+
+  app.get("/api/market/psx/timeseries/:type/:symbol", async (req, res) => {
+    const type = String(req.params.type || "").toLowerCase();
+    const symbol = String(req.params.symbol || "").trim().toUpperCase();
+    if (!symbol || !["eod", "int"].includes(type)) {
+      return res.status(400).json({ ok: false, message: "symbol and type (eod|int) are required." });
+    }
+    try {
+      const payload = await fetchPsxTimeseriesPayload(type, symbol);
+      const rows = Array.isArray(payload?.data) ? payload.data : [];
+      return res.json({ ok: true, data: rows });
+    } catch (error) {
+      return res.status(502).json({
+        ok: false,
+        message: "Failed to fetch PSX series.",
+        details: String(error.message || error),
+      });
+    }
+  });
 
   app.get("/api/market/forex/:pair", async (req, res) => {
     const pair = String(req.params.pair || "").trim().toUpperCase();

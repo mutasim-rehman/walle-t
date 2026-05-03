@@ -43,13 +43,13 @@ function AdminLogin({ onLogin }) {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#0f172a,#1e3a5f)' }}>
-      <div style={{ background: '#fff', borderRadius: 16, padding: '48px 40px', width: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: '48px 40px', width: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.45)', border: '1px solid var(--border-color)' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ background: '#dbeafe', borderRadius: 12, width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-            <Shield size={28} color="#1d4ed8" />
+          <div style={{ background: 'rgba(59,130,246,0.15)', borderRadius: 12, width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <Shield size={28} color="#93c5fd" />
           </div>
           <h1 style={{ fontSize: '1.6rem', marginBottom: 4 }}>Admin Portal</h1>
-          <p style={{ color: '#64748b', fontSize: '0.9rem' }}>Walle-T Administration</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Walle-T Administration</p>
         </div>
         <form onSubmit={submit}>
           <input className="input-field" style={{ marginBottom: 14 }} type="email" placeholder="Admin email" value={email} onChange={e => setEmail(e.target.value)} required />
@@ -103,9 +103,9 @@ function UserModal({ userId, onClose }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid #e2e8f0', paddingBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, borderBottom: '1px solid var(--border-color)', paddingBottom: 12 }}>
           {['overview','holdings','transactions','daily'].map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', background: tab === t ? '#2563eb' : '#f1f5f9', color: tab === t ? '#fff' : '#334155' }}>
+            <button key={t} onClick={() => setTab(t)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem', background: tab === t ? '#2563eb' : 'var(--bg-alt)', color: tab === t ? '#fff' : 'var(--text-muted)' }}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
@@ -123,7 +123,7 @@ function UserModal({ userId, onClose }) {
                 <h4 style={{ marginBottom: 12 }}>Financial Profile</h4>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: '0.875rem' }}>
                   {[['Age', profile.age], ['Country', profile.country], ['Monthly Income', fmt(profile.monthlyIncome)], ['Monthly Expenses', fmt(profile.monthlyExpenses)], ['Current Cash', fmt(profile.currentCash)]].map(([k,v]) => (
-                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border-color)' }}>
                       <span style={{ color: '#64748b' }}>{k}</span><strong>{v ?? '—'}</strong>
                     </div>
                   ))}
@@ -138,9 +138,9 @@ function UserModal({ userId, onClose }) {
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: 12 }}>Cash: <strong>{fmt(ledger?.cash)}</strong> · Holdings value: <strong>{fmt(ledger?.holdingsTotalValue)}</strong></p>
             {(ledger?.holdings || []).length === 0 ? <p style={{ color: '#94a3b8' }}>No holdings.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead><tr style={{ background: '#f8fafc' }}>{['Symbol','Qty','Price','Value'].map(h => <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: '#64748b', fontWeight: 600 }}>{h}</th>)}</tr></thead>
+                <thead><tr style={{ background: 'var(--bg-alt)' }}>{['Symbol','Qty','Price','Value'].map(h => <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: '#64748b', fontWeight: 600 }}>{h}</th>)}</tr></thead>
                 <tbody>{(ledger.holdings).map(h => (
-                  <tr key={h.symbol} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <tr key={h.symbol} style={{ borderTop: '1px solid var(--border-color)' }}>
                     <td style={{ padding: '8px 12px', fontWeight: 700 }}>{h.symbol}</td>
                     <td style={{ padding: '8px 12px' }}>{Number(h.qty).toFixed(4)}</td>
                     <td style={{ padding: '8px 12px' }}>{h.price != null ? fmt(h.price) : '—'}</td>
@@ -156,9 +156,9 @@ function UserModal({ userId, onClose }) {
           <div style={{ maxHeight: 380, overflowY: 'auto' }}>
             {transactions.length === 0 ? <p style={{ color: '#94a3b8' }}>No transactions.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead><tr style={{ background: '#f8fafc', position: 'sticky', top: 0 }}>{['Date','Type','Symbol','Qty','Amount','Cash After'].map(h => <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#64748b', fontWeight: 600 }}>{h}</th>)}</tr></thead>
+                <thead><tr style={{ background: 'var(--bg-alt)', position: 'sticky', top: 0 }}>{['Date','Type','Symbol','Qty','Amount','Cash After'].map(h => <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: '#64748b', fontWeight: 600 }}>{h}</th>)}</tr></thead>
                 <tbody>{transactions.slice(0, 100).map((t, i) => (
-                  <tr key={i} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <tr key={i} style={{ borderTop: '1px solid var(--border-color)' }}>
                     <td style={{ padding: '6px 10px' }}>{String(t.createdAt).slice(0,10)}</td>
                     <td style={{ padding: '6px 10px' }}><span style={{ background: t.type === 'BUY' ? '#d1fae5' : t.type === 'SELL' ? '#fee2e2' : '#f1f5f9', color: t.type === 'BUY' ? '#065f46' : t.type === 'SELL' ? '#991b1b' : '#334155', borderRadius: 4, padding: '2px 6px', fontWeight: 600 }}>{t.type}</span></td>
                     <td style={{ padding: '6px 10px' }}>{t.symbol || '—'}</td>
@@ -176,9 +176,9 @@ function UserModal({ userId, onClose }) {
           <div style={{ maxHeight: 380, overflowY: 'auto' }}>
             {dailyUsage.length === 0 ? <p style={{ color: '#94a3b8' }}>No usage data.</p> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead><tr style={{ background: '#f8fafc' }}>{['Date','Trades','Volume'].map(h => <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: '#64748b', fontWeight: 600 }}>{h}</th>)}</tr></thead>
+                <thead><tr style={{ background: 'var(--bg-alt)' }}>{['Date','Trades','Volume'].map(h => <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: '#64748b', fontWeight: 600 }}>{h}</th>)}</tr></thead>
                 <tbody>{dailyUsage.map(d => (
-                  <tr key={d.day} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <tr key={d.day} style={{ borderTop: '1px solid var(--border-color)' }}>
                     <td style={{ padding: '8px 12px' }}>{d.day}</td>
                     <td style={{ padding: '8px 12px' }}>{d.tradeCount}</td>
                     <td style={{ padding: '8px 12px' }}>{fmt(d.volume)}</td>
@@ -194,7 +194,7 @@ function UserModal({ userId, onClose }) {
 }
 
 const overlay = { position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 };
-const modal = { background: '#fff', borderRadius: 16, padding: '32px 28px', width: '100%', boxShadow: '0 24px 80px rgba(0,0,0,0.25)' };
+const modal = { background: 'var(--bg-card)', borderRadius: 16, padding: '32px 28px', width: '100%', boxShadow: '0 24px 80px rgba(0,0,0,0.45)', border: '1px solid var(--border-color)' };
 
 // ── Main Admin Panel ──────────────────────────────────────────────────────────
 export default function AdminPanel() {
@@ -249,7 +249,7 @@ export default function AdminPanel() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-main)' }}>
       {/* Header */}
       <div style={{ background: 'linear-gradient(135deg,#1d4ed8,#0f172a)', padding: '0 32px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
@@ -274,7 +274,7 @@ export default function AdminPanel() {
 
         {/* User Table */}
         <div className="finance-card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 12 }}>
             <h2 style={{ margin: 0, fontSize: '1.1rem', flex: 1 }}>Users <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.9rem' }}>({filtered.length})</span></h2>
             <div style={{ position: 'relative' }}>
               <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
@@ -287,7 +287,7 @@ export default function AdminPanel() {
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                <thead style={{ background: '#f8fafc' }}>
+                <thead style={{ background: 'var(--bg-alt)' }}>
                   <tr>
                     <SortHdr col="username" label="Username" />
                     <SortHdr col="email" label="Email" />
@@ -300,7 +300,7 @@ export default function AdminPanel() {
                     <tr><td colSpan={4} style={{ textAlign: 'center', padding: 32, color: '#94a3b8' }}>No users found.</td></tr>
                   )}
                   {filtered.map(u => (
-                    <tr key={u.id} style={{ borderTop: '1px solid #f1f5f9' }}>
+                    <tr key={u.id} style={{ borderTop: '1px solid var(--border-color)' }}>
                       <td style={{ padding: '12px 16px', fontWeight: 600 }}>{u.username}</td>
                       <td style={{ padding: '12px 16px', color: '#64748b' }}>{u.email}</td>
                       <td style={{ padding: '12px 16px', color: '#94a3b8' }}>{fmtDate(u.createdAt)}</td>

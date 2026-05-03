@@ -39,10 +39,10 @@ export default function SimpleLineChart({ series = [], height = 260, color = '#2
 
   return (
     <div>
-      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ border: '1px solid var(--border-color)', borderRadius: 8, background: '#fff' }}>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ border: '1px solid var(--border-color)', borderRadius: 8, background: '#0f172a' }}>
         {yTicks.map((tick) => (
           <g key={tick.y}>
-            <line x1={left} y1={tick.y} x2={width - right} y2={tick.y} stroke="#e2e8f0" strokeWidth="1" />
+            <line x1={left} y1={tick.y} x2={width - right} y2={tick.y} stroke="#1e293b" strokeWidth="1" />
             <text x={left - 8} y={tick.y + 4} textAnchor="end" fontSize="11" fill="#64748b">
               {tick.value.toFixed(2)}
             </text>

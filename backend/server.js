@@ -915,13 +915,20 @@ function computeLedgerState(transactions) {
   };
 }
 
+async function fetchPsxTimeseriesPayload(type, symbol) {
+  const t = String(type || "").toLowerCase();
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym || !["eod", "int"].includes(t)) throw new Error("PSX timeseries requires symbol and type eod|int");
+  const url = `https://dps.psx.com.pk/timeseries/${t}/${encodeURIComponent(sym)}`;
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) throw new Error(`PSX request failed (${res.status})`);
+  return res.json();
+}
+
 async function fetchPsxLatestPrice(symbol) {
   const sym = String(symbol || "").trim().toUpperCase();
   if (!sym) throw new Error("symbol is required");
-  const url = `https://dps.psx.com.pk/timeseries/eod/${encodeURIComponent(sym)}`;
-  const res = await fetch(url, { method: "GET" });
-  if (!res.ok) throw new Error(`PSX request failed (${res.status})`);
-  const payload = await res.json();
+  const payload = await fetchPsxTimeseriesPayload("eod", sym);
   const rows = Array.isArray(payload?.data) ? payload.data : [];
   if (!rows.length) throw new Error("PSX returned no data for symbol");
   const last = rows[rows.length - 1];
@@ -1836,6 +1843,7 @@ registerMarketRoutes(app, {
   hashString,
   generateSyntheticSeries,
   fetchOptionsFromProvider,
+  fetchPsxTimeseriesPayload,
 });
 
 registerRiskRoutes(app, {

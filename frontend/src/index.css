@@ -1,29 +1,26 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  /* Core Colors - Light Financial Theme */
-  --bg-main: #f8fafc; /* Slate 50 */
-  --bg-card: #ffffff;
-  --bg-alt: #f1f5f9; /* Slate 100 */
-  
-  --text-main: #0f172a; /* Slate 900 */
-  --text-muted: #64748b; /* Slate 500 */
-  
-  /* Accents - Professional */
-  --brand-primary: #2563eb; /* Blue 600 */
-  --brand-primary-hover: #1d4ed8; /* Blue 700 */
-  --status-positive: #10b981; /* Emerald 500 */
-  --status-positive-bg: #d1fae5;
-  --status-negative: #ef4444; /* Red 500 */
-  --status-negative-bg: #fee2e2;
+  /* Dark financial terminal */
+  --bg-main: #0b1120;
+  --bg-card: #111827;
+  --bg-alt: #1e293b;
 
-  /* Borders & Shadows */
-  --border-color: #e2e8f0; /* Slate 200 */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
 
-  /* Transitions */
+  --brand-primary: #3b82f6;
+  --brand-primary-hover: #2563eb;
+  --status-positive: #34d399;
+  --status-positive-bg: rgba(16, 185, 129, 0.12);
+  --status-negative: #f87171;
+  --status-negative-bg: rgba(248, 113, 113, 0.12);
+
+  --border-color: #334155;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -1px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.45), 0 4px 6px -2px rgba(0, 0, 0, 0.35);
+
   --transition-fast: 0.15s ease-in-out;
   --transition-normal: 0.25s ease-in-out;
 }
@@ -48,7 +45,7 @@ body {
 h1, h2, h3, h4, h5, h6 {
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: #0f172a;
+  color: var(--text-main);
 }
 
 /* Card Utility */
@@ -92,7 +89,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-secondary {
-  background-color: #ffffff;
+  background-color: var(--bg-alt);
   color: var(--text-main);
   border: 1px solid var(--border-color);
   padding: 10px 16px;
@@ -109,7 +106,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-secondary:hover {
-  background-color: var(--bg-alt);
+  background-color: #273549;
 }
 
 /* Input Utilities */
@@ -122,13 +119,13 @@ h1, h2, h3, h4, h5, h6 {
 
 .input-label {
   font-size: 0.875rem;
-  color: var(--text-main);
+  color: var(--text-muted);
   font-weight: 500;
 }
 
 .input-field {
   width: 100%;
-  background-color: #ffffff;
+  background-color: var(--bg-alt);
   border: 1px solid var(--border-color);
   color: var(--text-main);
   padding: 10px 14px;
@@ -142,7 +139,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .input-field:focus {
   border-color: var(--brand-primary);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
 }
 
 /* Animations */
@@ -180,7 +177,7 @@ h1, h2, h3, h4, h5, h6 {
   justify-content: center;
   min-height: 100vh;
   width: 100vw;
-  background-color: var(--bg-alt);
+  background-color: var(--bg-main);
 }
 
 /* Sidebar nav */
@@ -209,8 +206,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .nav-link.active {
-  background-color: #eff6ff;
-  color: var(--brand-primary);
+  background-color: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
 }
 
 .clickable {
@@ -218,7 +215,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .advisor-markdown {
-  color: #0f172a;
+  color: var(--text-main);
   line-height: 1.6;
   font-size: 0.95rem;
 }

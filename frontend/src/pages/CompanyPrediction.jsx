@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { fetchPsxTimeseriesRows } from '../lib/psxClient';
 
 const RANGE_OPTIONS = ['1D', '1M', '6M', 'YTD', '1Y', '3Y', '5Y'];
 
@@ -74,13 +75,10 @@ export default function CompanyPrediction() {
       setError('');
       try {
         const type = range === '1D' ? 'int' : 'eod';
-        const [priceRes, modelRes] = await Promise.all([
-          fetch(`/psx/timeseries/${type}/${encodeURIComponent(symbol)}`),
+        const [rows, modelRes] = await Promise.all([
+          fetchPsxTimeseriesRows(type, symbol),
           fetch(`/api/model-prediction/${encodeURIComponent(symbol)}`),
         ]);
-        if (!priceRes.ok) throw new Error(`PSX request failed (${priceRes.status})`);
-        const payload = await priceRes.json();
-        const rows = Array.isArray(payload?.data) ? payload.data : [];
         const points = rows
           .map((d) => ({
             time: new Date(Number(d[0]) * 1000),
@@ -176,7 +174,7 @@ export default function CompanyPrediction() {
               key={r}
               className="btn-secondary"
               onClick={() => setRange(r)}
-              style={{ background: r === range ? 'var(--bg-alt)' : '#fff', fontWeight: r === range ? 700 : 500 }}
+              style={{ background: r === range ? 'rgba(59,130,246,0.2)' : 'var(--bg-alt)', fontWeight: r === range ? 700 : 500 }}
             >
               {r}
             </button>
@@ -188,7 +186,7 @@ export default function CompanyPrediction() {
 
         {!loading && !error && visible.length > 0 && (
           <>
-            <svg viewBox="0 0 920 420" width="100%" height="420" style={{ border: '1px solid var(--border-color)', borderRadius: 8, background: '#fff' }}>
+            <svg viewBox="0 0 920 420" width="100%" height="420" style={{ border: '1px solid var(--border-color)', borderRadius: 8, background: '#0f172a' }}>
               <path d={chartData.actualPath} fill="none" stroke="#2563eb" strokeWidth="2.5" />
               {chartData.predPath && (
                 <path d={chartData.predPath} fill="none" stroke="#f97316" strokeWidth="2.5" strokeDasharray="6 4" />

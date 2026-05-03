@@ -20,7 +20,7 @@ export default function AppShell({ title, subtitle, children, actions }) {
 
   return (
     <div className="app-container" style={{ background: 'var(--bg-main)' }}>
-      <aside style={{ width: 260, background: 'var(--bg-card)', borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
+      <aside style={{ width: 260, background: 'var(--bg-card)', borderRight: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 24px rgba(0,0,0,0.2)' }}>
         <div style={{ padding: 20, borderBottom: '1px solid var(--border-color)' }}>
           <h2 style={{ fontSize: '1.2rem' }}>Walle-T Market</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>Trading Simulation MVP</p>
@@ -57,7 +57,7 @@ export default function AppShell({ title, subtitle, children, actions }) {
       </aside>
 
       <main style={{ flex: 1, minHeight: '100vh', overflowY: 'auto' }}>
-        <header style={{ padding: '20px 28px', borderBottom: '1px solid var(--border-color)', background: '#fff', position: 'sticky', top: 0, zIndex: 2 }}>
+        <header style={{ padding: '20px 28px', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-card)', position: 'sticky', top: 0, zIndex: 2 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
             <div>
               <h1 style={{ fontSize: '1.4rem' }}>{title}</h1>

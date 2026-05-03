@@ -114,11 +114,11 @@ export default function AdvisorPage() {
           style={{
             padding: 12,
             marginBottom: 12,
-            borderColor: '#f59e0b',
-            background: '#fffbeb',
+            borderColor: '#b45309',
+            background: 'rgba(245, 158, 11, 0.12)',
           }}
         >
-          <p style={{ margin: 0, color: '#92400e', fontWeight: 600 }}>
+          <p style={{ margin: 0, color: '#fbbf24', fontWeight: 600 }}>
             Advisor lock active: next prompt in {formatDuration((lockedUntil - nowMs) / 1000)}.
             Limit policy is 1 prompt per 5 minutes and max 3 prompts in 6 hours.
           </p>
@@ -127,7 +127,7 @@ export default function AdvisorPage() {
 
       <div className="finance-card" style={{ padding: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <div style={{ background: '#eff6ff', padding: 8, borderRadius: 8 }}>
+          <div style={{ background: 'rgba(59,130,246,0.12)', padding: 8, borderRadius: 8 }}>
             <MessageSquare size={18} color="var(--brand-primary)" />
           </div>
           <p style={{ color: 'var(--text-muted)', margin: 0 }}>
@@ -177,7 +177,7 @@ export default function AdvisorPage() {
                   border: '1px solid var(--border-color)',
                   borderRadius: 8,
                   padding: '10px 12px',
-                  background: '#f8fafc',
+                  background: 'var(--bg-alt)',
                 }}
               >
                 <p style={{ margin: 0, fontWeight: 800, fontSize: '0.9rem' }}>You</p>
@@ -186,13 +186,13 @@ export default function AdvisorPage() {
 
               <div
                 style={{
-                  border: '1px solid #bfdbfe',
+                  border: '1px solid rgba(59,130,246,0.35)',
                   borderRadius: 10,
                   padding: '12px 14px',
-                  background: '#eff6ff',
+                  background: 'rgba(59,130,246,0.08)',
                 }}
               >
-                <p style={{ margin: '0 0 8px 0', fontWeight: 800, color: '#1e3a8a' }}>Advisor</p>
+                <p style={{ margin: '0 0 8px 0', fontWeight: 800, color: '#93c5fd' }}>Advisor</p>
                 <div className="advisor-markdown">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.reply || '-'}</ReactMarkdown>
                 </div>

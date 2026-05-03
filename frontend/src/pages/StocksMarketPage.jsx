@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback } from "react";
 import AppShell from "../components/AppShell";
+import PriceAreaChart from "../components/PriceAreaChart";
 import { useAuth } from "../auth/AuthContext";
 import { apiGet, apiPost } from "../lib/api";
+import { fetchPsxEodRows, priceTickFromRows, runPool } from "../lib/psxClient";
 import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, CheckCircle, Clock, ChevronUp, ChevronDown, Zap } from "lucide-react";
 
 const WATCHLIST = [
@@ -21,57 +23,6 @@ const WATCHLIST = [
 
 function fmt2(n) { return n == null ? "—" : Number(n).toFixed(2); }
 function fmtMoney(n) { return n == null ? "—" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-
-// ── Candlestick-style SVG chart ───────────────────────────────────────────────
-function PriceChart({ series, height = 300 }) {
-  if (!series || series.length < 2) return (
-    <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", background: "#0f172a", borderRadius: 8 }}>
-      <span>Loading chart…</span>
-    </div>
-  );
-
-  const W = 900, padL = 56, padR = 16, padT = 12, padB = 28;
-  const chartW = W - padL - padR, chartH = height - padT - padB;
-  const vals = series.map(p => Number(p.value)).filter(Number.isFinite);
-  const min = Math.min(...vals), max = Math.max(...vals), span = Math.max(1e-9, max - min);
-  const toY = v => padT + ((max - v) / span) * chartH;
-  const toX = i => padL + (i / (series.length - 1)) * chartW;
-  const path = series.map((p, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(p.value).toFixed(1)}`).join(" ");
-  const area = `${path} L${toX(series.length - 1).toFixed(1)},${padT + chartH} L${toX(0).toFixed(1)},${padT + chartH} Z`;
-  const first = vals[0], last = vals[vals.length - 1];
-  const up = last >= first;
-  const lineColor = up ? "#10b981" : "#ef4444";
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map(r => ({ v: max - r * span, y: padT + r * chartH }));
-
-  // x-axis dates (sample 6 labels)
-  const xLabels = [0, 0.2, 0.4, 0.6, 0.8, 1].map(r => {
-    const i = Math.round(r * (series.length - 1));
-    return { x: toX(i), label: series[i]?.time ? new Date(series[i].time).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "" };
-  });
-
-  return (
-    <svg viewBox={`0 0 ${W} ${height}`} width="100%" height={height} style={{ background: "#0f172a", borderRadius: 8, display: "block" }}>
-      <defs>
-        <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={lineColor} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={lineColor} stopOpacity="0.01" />
-        </linearGradient>
-      </defs>
-      {ticks.map((t, i) => (
-        <g key={i}>
-          <line x1={padL} y1={t.y} x2={W - padR} y2={t.y} stroke="#1e293b" strokeWidth="1" />
-          <text x={padL - 6} y={t.y + 4} textAnchor="end" fontSize="10" fill="#475569">{fmt2(t.v)}</text>
-        </g>
-      ))}
-      {xLabels.map((l, i) => (
-        <text key={i} x={l.x} y={height - 6} textAnchor="middle" fontSize="10" fill="#475569">{l.label}</text>
-      ))}
-      <path d={area} fill="url(#areaGrad)" />
-      <path d={path} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" />
-      <circle cx={toX(series.length - 1)} cy={toY(last)} r="4" fill={lineColor} />
-    </svg>
-  );
-}
 
 // ── Order Panel ───────────────────────────────────────────────────────────────
 function OrderPanel({ symbol, price, cash, holdings, onFilled }) {
@@ -233,16 +184,18 @@ export default function StocksMarketPage() {
   const loadChart = useCallback(async (sym) => {
     setLoadingChart(true);
     try {
-      const res = await fetch(`/psx/timeseries/eod/${encodeURIComponent(sym)}`);
-      const payload = await res.json();
-      const rows = Array.isArray(payload?.data) ? payload.data : [];
+      const rows = await fetchPsxEodRows(sym);
       const days = Math.max(2, Number(priceRange) || 180);
       const trimmedRows = rows.slice(-days);
       const mapped = trimmedRows
         .map(r => ({ time: new Date(Number(r[0]) * 1000).toISOString(), value: Number(r[1]) }))
         .filter(p => Number.isFinite(p.value));
       setSeries(mapped);
-    } catch { setSeries([]); }
+      const tick = priceTickFromRows(rows);
+      if (tick) setPriceCache(prev => ({ ...prev, [sym]: tick }));
+    } catch {
+      setSeries([]);
+    }
     setLoadingChart(false);
   }, [priceRange]);
 
@@ -261,29 +214,33 @@ export default function StocksMarketPage() {
 
   useEffect(() => { loadPortfolio(); }, [loadPortfolio]);
 
-  // Fetch prices for watchlist (quick: use last bar of series-like endpoint)
+  // Watchlist prices: bounded concurrency so localhost PSX proxy is not overwhelmed (was 12 parallel full series).
   useEffect(() => {
     let cancelled = false;
-    async function fetchAll() {
-      const updates = {};
-      await Promise.allSettled(WATCHLIST.map(async item => {
+    const REFRESH_MS = 120000;
+
+    async function refreshWatchlist() {
+      const concurrency = import.meta.env.DEV ? 3 : 4;
+      await runPool(WATCHLIST, concurrency, async (item) => {
+        if (cancelled) return;
         try {
-          const res = await fetch(`/psx/timeseries/eod/${encodeURIComponent(item.sym)}`);
-          const payload = await res.json();
-          const rows = Array.isArray(payload?.data) ? payload.data : [];
-          if (rows.length >= 2) {
-            const [prevRow, lastRow] = rows.slice(-2);
-            const last = Number(lastRow?.[1]);
-            const prev = Number(prevRow?.[1]);
-            updates[item.sym] = { price: last, chg: prev ? ((last - prev) / prev) * 100 : 0 };
+          const rows = await fetchPsxEodRows(item.sym);
+          const tick = priceTickFromRows(rows);
+          if (tick && !cancelled) {
+            setPriceCache((prev) => ({ ...prev, [item.sym]: tick }));
           }
-        } catch { }
-      }));
-      if (!cancelled) setPriceCache(updates);
+        } catch {
+          /* skip symbol */
+        }
+      });
     }
-    fetchAll();
-    const iv = setInterval(fetchAll, 60000);
-    return () => { cancelled = true; clearInterval(iv); };
+
+    refreshWatchlist();
+    const iv = setInterval(refreshWatchlist, REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
   }, []);
 
   const latest = series[series.length - 1]?.value ?? null;
@@ -353,7 +310,7 @@ export default function StocksMarketPage() {
                 <RefreshCw size={20} style={{ animation: "spin 1s linear infinite" }} />
                 <span style={{ marginLeft: 10 }}>Loading chart…</span>
               </div>
-            ) : <PriceChart series={series} height={300} />}
+            ) : <PriceAreaChart series={series} height={300} valueDecimals={2} />}
           </div>
 
           {/* Recent Trades */}
