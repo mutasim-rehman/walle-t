@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AppShell from '../components/AppShell';
 import { useAuth } from '../auth/AuthContext';
-import { API_BASE } from '../lib/api';
+import { apiPost } from '../lib/api';
 
 function starterPrompts() {
   return [
@@ -66,28 +66,13 @@ export default function AdvisorPage() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE}/advisor`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: currentUser.id, message: question }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data?.ok) {
-        if (response.status === 429 && Number.isFinite(Number(data?.retryAfterSec))) {
-          const retrySec = Number(data.retryAfterSec);
-          const lockedUntilMs = Date.now() + retrySec * 1000;
-          setLockedUntil(lockedUntilMs);
-          setNowMs(Date.now());
-        }
-        const details = data?.retryAfterSec
-          ? ` (try again in ${formatDuration(data.retryAfterSec)})`
-          : '';
-        throw new Error((data?.message || 'Failed to get advice.') + details);
-      }
-
+      const data = await apiPost('/advisor', { message: question });
       setChat((prev) => [
         {
-          id: crypto.randomUUID(),
+          id:
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
           question,
           reply: data.reply || '',
           sources: Array.isArray(data.sources) ? data.sources : [],
@@ -97,7 +82,14 @@ export default function AdvisorPage() {
         ...prev,
       ]);
     } catch (err) {
-      setError(err.message || 'Failed to get advice.');
+      const status = err?.status;
+      const retryAfterSec = Number(err?.data?.retryAfterSec);
+      if (status === 429 && Number.isFinite(retryAfterSec)) {
+        const lockedUntilMs = Date.now() + retryAfterSec * 1000;
+        setLockedUntil(lockedUntilMs);
+        setNowMs(Date.now());
+      }
+      setError(err?.message || 'Failed to get advice.');
     } finally {
       setLoading(false);
     }
@@ -136,7 +128,12 @@ export default function AdvisorPage() {
         </div>
 
         <form onSubmit={askAdvisor}>
+          <label htmlFor="advisor-question" className="input-label" style={{ display: 'block', marginBottom: 6 }}>
+            Your question
+          </label>
           <textarea
+            id="advisor-question"
+            aria-label="Advisor question"
             className="input-field"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}

@@ -7,34 +7,6 @@
  * GET  /api/admin/stats            – platform-wide aggregate stats
  */
 
-const crypto = require("crypto");
-
-// In-memory admin sessions (keyed by token → { createdAt })
-const adminSessions = new Map();
-const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
-
-function generateAdminToken() {
-  return crypto.randomBytes(32).toString("hex");
-}
-
-function isAdminTokenValid(token) {
-  const session = adminSessions.get(String(token || "").trim());
-  if (!session) return false;
-  if (Date.now() - session.createdAt > ADMIN_SESSION_TTL_MS) {
-    adminSessions.delete(token);
-    return false;
-  }
-  return true;
-}
-
-function requireAdmin(req, res, next) {
-  const auth = req.headers["x-admin-token"] || req.query.adminToken || "";
-  if (!isAdminTokenValid(String(auth).trim())) {
-    return res.status(401).json({ ok: false, message: "Unauthorized. Admin token missing or expired." });
-  }
-  return next();
-}
-
 module.exports = function registerAdminRoutes(
   app,
   {
@@ -44,6 +16,10 @@ module.exports = function registerAdminRoutes(
     readProfileFromSheet,
     deleteUserFromSheet,
     priceHoldings,
+    requireAdmin,
+    generateAdminToken,
+    adminSessions,
+    ADMIN_SESSION_TTL_MS,
   }
 ) {
   // ── POST /api/admin/login ──────────────────────────────────────────────────

@@ -1,9 +1,16 @@
 module.exports = function registerPortfolioRoutes(app, deps) {
-  const { readProfileFromSheet, readTransactionsForUser, isProfileComplete, computeLedgerState } = deps;
+  const {
+    readProfileFromSheet,
+    readTransactionsForUser,
+    isProfileComplete,
+    computeLedgerState,
+    requireAuth,
+    assertSelfOrFail,
+  } = deps;
 
-  app.get("/api/portfolio/:userId", async (req, res) => {
+  app.get("/api/portfolio/:userId", requireAuth, async (req, res) => {
     const userId = String(req.params.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+    if (!assertSelfOrFail(req, res, userId)) return;
 
     let profile = null;
     try {
@@ -29,6 +36,8 @@ module.exports = function registerPortfolioRoutes(app, deps) {
       profileComplete: isProfileComplete(profile),
       cash: ledger.cash,
       holdings: ledger.holdings,
+      forexPositions: ledger.forexPositions || [],
+      optionPositions: ledger.optionPositions || [],
       transactions,
     });
   });

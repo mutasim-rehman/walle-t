@@ -165,15 +165,15 @@ const Login = () => {
               <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, padding: 12, marginBottom: 14, background: 'var(--bg-alt)' }}>
                 <p style={{ margin: '0 0 10px 0', fontWeight: 700 }}>Signup + Onboarding (single step)</p>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" placeholder="Age *" value={age} onChange={(e) => setAge(e.target.value)} />
-                  <input className="input-field" style={{ marginBottom: 0 }} placeholder="Country *" value={country} onChange={(e) => setCountry(e.target.value)} />
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Monthly income *" value={monthlyIncome} onChange={(e) => setMonthlyIncome(e.target.value)} />
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Monthly expenses *" value={monthlyExpenses} onChange={(e) => setMonthlyExpenses(e.target.value)} />
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Current cash *" value={currentCash} onChange={(e) => setCurrentCash(e.target.value)} />
+                  <input className="input-field" aria-label="Age" style={{ marginBottom: 0 }} type="number" placeholder="Age *" value={age} onChange={(e) => setAge(e.target.value)} />
+                  <input className="input-field" aria-label="Country" style={{ marginBottom: 0 }} placeholder="Country *" value={country} onChange={(e) => setCountry(e.target.value)} />
+                  <input className="input-field" aria-label="Monthly income" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Monthly income *" value={monthlyIncome} onChange={(e) => setMonthlyIncome(e.target.value)} />
+                  <input className="input-field" aria-label="Monthly expenses" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Monthly expenses *" value={monthlyExpenses} onChange={(e) => setMonthlyExpenses(e.target.value)} />
+                  <input className="input-field" aria-label="Current cash" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Current cash *" value={currentCash} onChange={(e) => setCurrentCash(e.target.value)} />
                   <div className="input-field" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', fontWeight: 700 }}>$10,000 simulated balance (auto)</div>
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Land value (optional)" value={landValue} onChange={(e) => setLandValue(e.target.value)} />
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Apartments value (optional)" value={apartmentsValue} onChange={(e) => setApartmentsValue(e.target.value)} />
-                  <input className="input-field" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Loans balance (optional)" value={loanBalance} onChange={(e) => setLoanBalance(e.target.value)} />
+                  <input className="input-field" aria-label="Land value" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Land value (optional)" value={landValue} onChange={(e) => setLandValue(e.target.value)} />
+                  <input className="input-field" aria-label="Apartments value" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Apartments value (optional)" value={apartmentsValue} onChange={(e) => setApartmentsValue(e.target.value)} />
+                  <input className="input-field" aria-label="Loans balance" style={{ marginBottom: 0 }} type="number" step="0.01" placeholder="Loans balance (optional)" value={loanBalance} onChange={(e) => setLoanBalance(e.target.value)} />
                   <select className="input-field" style={{ marginBottom: 0 }} value={medicalInsurance} onChange={(e) => setMedicalInsurance(e.target.value)}>
                     <option value="no">Medical insurance: No</option>
                     <option value="yes">Medical insurance: Yes</option>
@@ -183,9 +183,9 @@ const Login = () => {
                   <p style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>Optional initial holdings:</p>
                   {holdings.map((h, idx) => (
                     <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, marginBottom: 8 }}>
-                      <input className="input-field" style={{ marginBottom: 0 }} placeholder="Symbol (e.g. ABOT)" value={h.symbol} onChange={(e) => setHoldings((prev) => prev.map((x, i) => (i === idx ? { ...x, symbol: e.target.value } : x)))} />
-                      <input className="input-field" style={{ marginBottom: 0 }} type="number" placeholder="Qty" value={h.qty} onChange={(e) => setHoldings((prev) => prev.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
-                      <button type="button" className="btn-secondary" onClick={() => setHoldings((prev) => (prev.filter((_x, i) => i !== idx).length ? prev.filter((_x, i) => i !== idx) : [{ symbol: '', qty: '' }]))}>
+                      <input className="input-field" aria-label={`Holding ${idx + 1} symbol`} style={{ marginBottom: 0 }} placeholder="Symbol (e.g. ABOT)" value={h.symbol} onChange={(e) => setHoldings((prev) => prev.map((x, i) => (i === idx ? { ...x, symbol: e.target.value } : x)))} />
+                      <input className="input-field" aria-label={`Holding ${idx + 1} quantity`} style={{ marginBottom: 0 }} type="number" placeholder="Qty" value={h.qty} onChange={(e) => setHoldings((prev) => prev.map((x, i) => (i === idx ? { ...x, qty: e.target.value } : x)))} />
+                      <button type="button" aria-label={`Remove holding ${idx + 1}`} className="btn-secondary" onClick={() => setHoldings((prev) => (prev.filter((_x, i) => i !== idx).length ? prev.filter((_x, i) => i !== idx) : [{ symbol: '', qty: '' }]))}>
                         <Trash2 size={14} />
                       </button>
                     </div>

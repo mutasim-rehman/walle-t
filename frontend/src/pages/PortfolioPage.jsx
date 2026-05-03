@@ -13,21 +13,26 @@ export default function PortfolioPage() {
   const { currentUser } = useAuth();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   async function load() {
     if (!currentUser?.id) return;
     setError('');
+    setLoading(true);
     try {
       const res = await apiGet(`/portfolio/${encodeURIComponent(currentUser.id)}`);
       setData(res);
     } catch (err) {
-      setError(err.message);
+      setError(err?.message || 'Failed to load portfolio.');
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
     if (!currentUser?.id) return;
     let ignore = false;
+    setLoading(true);
     apiGet(`/portfolio/${encodeURIComponent(currentUser.id)}`)
       .then((res) => {
         if (ignore) return;
@@ -36,7 +41,10 @@ export default function PortfolioPage() {
       })
       .catch((err) => {
         if (ignore) return;
-        setError(err.message);
+        setError(err?.message || 'Failed to load portfolio.');
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
       });
     return () => {
       ignore = true;
@@ -49,7 +57,20 @@ export default function PortfolioPage() {
       subtitle="All holdings and transaction history across stocks, forex and options."
       actions={<button className="btn-secondary" onClick={load}>Refresh</button>}
     >
-      {error ? <p style={{ color: 'var(--status-negative)' }}>{error}</p> : null}
+      {error ? (
+        <div
+          className="finance-card"
+          style={{ padding: 12, marginBottom: 12, borderColor: '#fca5a5', background: '#fef2f2' }}
+        >
+          <p style={{ margin: 0, color: '#991b1b', fontWeight: 600 }}>{error}</p>
+          <button type="button" className="btn-secondary" style={{ marginTop: 8 }} onClick={load}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {loading && !data && !error ? (
+        <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>Loading portfolio...</p>
+      ) : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(160px,1fr))', gap: 12 }}>
         <div className="finance-card" style={{ padding: 14 }}>

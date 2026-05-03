@@ -8,12 +8,11 @@ module.exports = function registerForecastRoutes(app, deps) {
     buildNetWorthProjection,
     getGeminiClient,
     GEMINI_MODEL,
+    requireAuth,
   } = deps;
 
-  app.post("/api/forecast", async (req, res) => {
-    const { userId } = req.body || {};
-    const id = String(userId || "").trim();
-    if (!id) return res.status(400).json({ ok: false, message: "userId is required." });
+  app.post("/api/forecast", requireAuth, async (req, res) => {
+    const id = req.user.id;
 
     let profile = null;
     try {

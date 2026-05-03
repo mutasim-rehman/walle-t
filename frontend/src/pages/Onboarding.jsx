@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building, CheckCircle2, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
-import { API_BASE } from '../lib/api';
+import { apiPost } from '../lib/api';
 
 function toNum(v) {
   if (v == null) return null;
@@ -75,53 +75,42 @@ export default function Onboarding() {
       .filter((h) => h.symbol && h.qty != null && h.qty > 0);
 
     try {
-      const res = await fetch(`${API_BASE}/onboarding/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: currentUser.id,
-          profile: {
-            age: toNum(age),
-            country: String(country).trim(),
-            monthlyIncome: toNum(monthlyIncome),
-            monthlyExpenses: toNum(monthlyExpenses),
-            currentCash: toNum(currentCash),
-            assets: {
-              land: toNum(landValue) || 0,
-              apartments: toNum(apartmentValue) || 0,
-              vehicles: toNum(vehicleValue) || 0,
-              other: toNum(otherAssetsValue) || 0,
-              total:
-                (toNum(landValue) || 0) +
-                (toNum(apartmentValue) || 0) +
-                (toNum(vehicleValue) || 0) +
-                (toNum(otherAssetsValue) || 0),
-            },
-            liabilities: {
-              loans: toNum(loanBalance) || 0,
-              credit: toNum(creditBalance) || 0,
-              other: toNum(otherLiabilitiesValue) || 0,
-              total: (toNum(loanBalance) || 0) + (toNum(creditBalance) || 0) + (toNum(otherLiabilitiesValue) || 0),
-            },
-            extras: {
-              medicalInsurance: medicalInsurance === 'yes',
-            },
+      await apiPost('/onboarding/complete', {
+        profile: {
+          age: toNum(age),
+          country: String(country).trim(),
+          monthlyIncome: toNum(monthlyIncome),
+          monthlyExpenses: toNum(monthlyExpenses),
+          currentCash: toNum(currentCash),
+          assets: {
+            land: toNum(landValue) || 0,
+            apartments: toNum(apartmentValue) || 0,
+            vehicles: toNum(vehicleValue) || 0,
+            other: toNum(otherAssetsValue) || 0,
+            total:
+              (toNum(landValue) || 0) +
+              (toNum(apartmentValue) || 0) +
+              (toNum(vehicleValue) || 0) +
+              (toNum(otherAssetsValue) || 0),
           },
-          initialHoldings,
-        }),
+          liabilities: {
+            loans: toNum(loanBalance) || 0,
+            credit: toNum(creditBalance) || 0,
+            other: toNum(otherLiabilitiesValue) || 0,
+            total: (toNum(loanBalance) || 0) + (toNum(creditBalance) || 0) + (toNum(otherLiabilitiesValue) || 0),
+          },
+          extras: {
+            medicalInsurance: medicalInsurance === 'yes',
+          },
+        },
+        initialHoldings,
       });
-      const data = await res.json();
-      if (!res.ok || !data?.ok) {
-        setIsError(true);
-        setMessage(data?.message || 'Onboarding failed.');
-        return;
-      }
       setIsError(false);
       setMessage('Onboarding completed. Your $10,000 simulated investment balance is now available.');
       setTimeout(() => navigate('/dashboard'), 600);
-    } catch {
+    } catch (err) {
       setIsError(true);
-      setMessage('Could not reach the onboarding service.');
+      setMessage(err?.message || 'Could not reach the onboarding service.');
     } finally {
       setLoading(false);
     }

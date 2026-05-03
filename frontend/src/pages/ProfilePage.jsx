@@ -91,14 +91,14 @@ export default function ProfilePage() {
       ) : null}
       <form className="finance-card" style={{ padding: 16 }} onSubmit={save}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(200px,1fr))', gap: 10 }}>
-          <input className="input-field" placeholder="Age" value={form.age} onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))} />
-          <input className="input-field" placeholder="Country" value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} />
-          <input className="input-field" placeholder="Monthly Income" value={form.monthlyIncome} onChange={(e) => setForm((f) => ({ ...f, monthlyIncome: e.target.value }))} />
-          <input className="input-field" placeholder="Monthly Expenses" value={form.monthlyExpenses} onChange={(e) => setForm((f) => ({ ...f, monthlyExpenses: e.target.value }))} />
-          <input className="input-field" placeholder="Current Cash" value={form.currentCash} onChange={(e) => setForm((f) => ({ ...f, currentCash: e.target.value }))} />
-          <input className="input-field" placeholder="Land Value" value={form.assetsLand} onChange={(e) => setForm((f) => ({ ...f, assetsLand: e.target.value }))} />
-          <input className="input-field" placeholder="Apartments Value" value={form.assetsApartments} onChange={(e) => setForm((f) => ({ ...f, assetsApartments: e.target.value }))} />
-          <input className="input-field" placeholder="Loans Balance" value={form.liabilitiesLoans} onChange={(e) => setForm((f) => ({ ...f, liabilitiesLoans: e.target.value }))} />
+          <input className="input-field" aria-label="Age" placeholder="Age" value={form.age} onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))} />
+          <input className="input-field" aria-label="Country" placeholder="Country" value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} />
+          <input className="input-field" aria-label="Monthly income" placeholder="Monthly Income" value={form.monthlyIncome} onChange={(e) => setForm((f) => ({ ...f, monthlyIncome: e.target.value }))} />
+          <input className="input-field" aria-label="Monthly expenses" placeholder="Monthly Expenses" value={form.monthlyExpenses} onChange={(e) => setForm((f) => ({ ...f, monthlyExpenses: e.target.value }))} />
+          <input className="input-field" aria-label="Current cash" placeholder="Current Cash" value={form.currentCash} onChange={(e) => setForm((f) => ({ ...f, currentCash: e.target.value }))} />
+          <input className="input-field" aria-label="Land value" placeholder="Land Value" value={form.assetsLand} onChange={(e) => setForm((f) => ({ ...f, assetsLand: e.target.value }))} />
+          <input className="input-field" aria-label="Apartments value" placeholder="Apartments Value" value={form.assetsApartments} onChange={(e) => setForm((f) => ({ ...f, assetsApartments: e.target.value }))} />
+          <input className="input-field" aria-label="Loans balance" placeholder="Loans Balance" value={form.liabilitiesLoans} onChange={(e) => setForm((f) => ({ ...f, liabilitiesLoans: e.target.value }))} />
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
           <button className="btn-primary" type="submit">Save Profile</button>

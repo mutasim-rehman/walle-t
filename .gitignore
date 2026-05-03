@@ -12,6 +12,8 @@ presentation.md
 # Runtime/user data (sensitive + generated)
 backend/data/users.json
 backend/data/activities.json
+backend/data/profiles.json
+env
 
 # Logs and local artifacts
 *.log

@@ -1,25 +1,27 @@
 module.exports = function registerActivitiesRoutes(app, deps) {
-  const { readActivities, writeActivities, readUsersFromSheet, crypto } = deps;
+  const { readActivities, writeActivities, readUsersFromSheet, crypto, requireAuth, assertSelfOrFail } = deps;
 
-  app.get("/api/activities/:userId", (req, res) => {
+  app.get("/api/activities/:userId", requireAuth, (req, res) => {
     const userId = String(req.params.userId || "").trim();
-    if (!userId) {
-      return res.status(400).json({ ok: false, message: "userId is required." });
-    }
+    if (!assertSelfOrFail(req, res, userId)) return;
 
     const activities = readActivities();
-    const userActivities = activities.filter((a) => a.userId === userId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const userActivities = activities
+      .filter((a) => a.userId === userId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     return res.json({ ok: true, activities: userActivities });
   });
 
-  app.post("/api/activities", async (req, res) => {
-    const { userId, symbol, activityType, budget, note } = req.body || {};
-    if (!userId || !symbol || !activityType) {
+  app.post("/api/activities", requireAuth, async (req, res) => {
+    const { symbol, activityType, budget, note } = req.body || {};
+    if (!symbol || !activityType) {
       return res.status(400).json({
         ok: false,
-        message: "userId, symbol, and activityType are required.",
+        message: "symbol and activityType are required.",
       });
     }
+
+    const userId = req.user.id;
 
     let users = [];
     try {

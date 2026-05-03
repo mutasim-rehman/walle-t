@@ -1,14 +1,16 @@
 module.exports = function registerRiskRoutes(app, deps) {
-  const { readTransactionsForUser, clamp } = deps;
+  const { readTransactionsForUser, clamp, requireAuth, assertSelfOrFail } = deps;
 
-  app.get("/api/risk/:userId", async (req, res) => {
+  app.get("/api/risk/:userId", requireAuth, async (req, res) => {
     const userId = String(req.params.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+    if (!assertSelfOrFail(req, res, userId)) return;
     let transactions = [];
     try {
       transactions = await readTransactionsForUser(userId, { limit: 1200 });
     } catch (error) {
-      return res.status(500).json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
+      return res
+        .status(500)
+        .json({ ok: false, message: "Failed to read transactions.", details: String(error.message || error) });
     }
     const byAsset = { stock: 0, forex: 0, option: 0, other: 0 };
     const bySymbolAmount = new Map();
@@ -30,6 +32,20 @@ module.exports = function registerRiskRoutes(app, deps) {
       bySymbolAmount.set(s, (bySymbolAmount.get(s) || 0) + amount);
     }
     const totalExposure = Object.values(byAsset).reduce((a, b) => a + b, 0);
+    if (totalExposure === 0) {
+      return res.json({
+        ok: true,
+        risk: {
+          score: null,
+          status: "insufficient_data",
+          totalExposure: 0,
+          concentration: 0,
+          assetMix: {},
+          topSymbols: [],
+          shocks: { equityMinus10Pct: 0, fxMinus5Pct: 0, volSpikeOptionsMinus20Pct: 0 },
+        },
+      });
+    }
     const topSymbols = [...bySymbolAmount.entries()]
       .map(([symbol, exposure]) => ({ symbol, exposure }))
       .sort((a, b) => b.exposure - a.exposure)
@@ -37,7 +53,10 @@ module.exports = function registerRiskRoutes(app, deps) {
     const concentration = topSymbols.length ? topSymbols[0].exposure / Math.max(1, totalExposure) : 0;
     const riskScore = clamp(
       Math.round(
-        100 - concentration * 55 - (byAsset.option / Math.max(1, totalExposure)) * 20 - (byAsset.forex / Math.max(1, totalExposure)) * 10
+        100 -
+          concentration * 55 -
+          (byAsset.option / Math.max(1, totalExposure)) * 20 -
+          (byAsset.forex / Math.max(1, totalExposure)) * 10
       ),
       15,
       95
@@ -46,6 +65,7 @@ module.exports = function registerRiskRoutes(app, deps) {
       ok: true,
       risk: {
         score: riskScore,
+        status: "ok",
         totalExposure,
         concentration: Number((concentration * 100).toFixed(2)),
         assetMix: Object.fromEntries(Object.entries(byAsset).map(([k, v]) => [k, Number(v.toFixed(2))])),

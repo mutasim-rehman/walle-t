@@ -132,6 +132,7 @@ function ForexOrderPanel({ pair, price, cash, onFilled }) {
             <div style={{ display: "flex", flexDirection: "column", borderLeft: "1px solid #334155" }}>
               <button
                 type="button"
+                aria-label="Increase units"
                 onClick={() => setUnits((q) => String(Math.max(1, Number(q) + 100)))}
                 style={{ flex: 1, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: "0 8px" }}
               >
@@ -139,6 +140,7 @@ function ForexOrderPanel({ pair, price, cash, onFilled }) {
               </button>
               <button
                 type="button"
+                aria-label="Decrease units"
                 onClick={() => setUnits((q) => String(Math.max(1, Number(q) - 100)))}
                 style={{ flex: 1, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: "0 8px" }}
               >
@@ -333,10 +335,13 @@ export default function ForexMarketPage() {
   const [priceRange, setPriceRange] = useState("90");
   const [source, setSource] = useState("");
   const [isFallback, setIsFallback] = useState(false);
+  const [chartError, setChartError] = useState("");
+  const [portfolioError, setPortfolioError] = useState("");
 
   const loadChart = useCallback(async () => {
     const sym = active.sym;
     setLoadingChart(true);
+    setChartError("");
     try {
       const data = await apiGet(`/market/forex/${encodeURIComponent(sym)}`);
       let pts = Array.isArray(data.series) ? [...data.series] : [];
@@ -345,10 +350,11 @@ export default function ForexMarketPage() {
       setSeries(pts.map((p) => ({ time: p.time, value: Number(p.value) })).filter((p) => Number.isFinite(p.value)));
       setSource(data.source || "");
       setIsFallback(Boolean(data.providerFallback));
-    } catch {
+    } catch (err) {
       setSeries([]);
       setSource("");
       setIsFallback(false);
+      setChartError(err?.message || `Could not load ${sym} chart.`);
     }
     setLoadingChart(false);
   }, [active.sym, priceRange]);
@@ -359,12 +365,15 @@ export default function ForexMarketPage() {
 
   const loadPortfolio = useCallback(async () => {
     if (!currentUser?.id) return;
+    setPortfolioError("");
     try {
       const data = await apiGet(`/portfolio/${encodeURIComponent(currentUser.id)}`);
       setCash(data.cash ?? null);
       setHoldings(Array.isArray(data.holdings) ? data.holdings : []);
       setTrades(Array.isArray(data.transactions) ? data.transactions : []);
-    } catch {}
+    } catch (err) {
+      setPortfolioError(err?.message || "Could not load portfolio.");
+    }
   }, [currentUser?.id]);
 
   useEffect(() => {
@@ -518,10 +527,25 @@ export default function ForexMarketPage() {
                 <RefreshCw size={20} style={{ animation: "spin 1s linear infinite" }} />
                 <span style={{ marginLeft: 10 }}>Loading chart…</span>
               </div>
+            ) : chartError ? (
+              <div style={{ height: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#fca5a5", gap: 12 }}>
+                <span style={{ fontSize: "0.85rem" }}>{chartError}</span>
+                <button type="button" onClick={loadChart} style={{ background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontSize: "0.8rem" }}>
+                  Retry
+                </button>
+              </div>
             ) : (
               <PriceAreaChart series={series} height={300} valueDecimals={5} />
             )}
           </div>
+          {portfolioError ? (
+            <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "#450a0a", border: "1px solid #ef4444" }}>
+              <p style={{ margin: 0, color: "#fca5a5", fontSize: "0.78rem" }}>{portfolioError}</p>
+              <button type="button" onClick={loadPortfolio} style={{ marginTop: 6, background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderRadius: 4, padding: "4px 8px", cursor: "pointer", fontSize: "0.7rem" }}>
+                Retry
+              </button>
+            </div>
+          ) : null}
 
           <div style={{ background: "#0f172a", borderRadius: 12, border: "1px solid #1e293b" }}>
             <div style={{ padding: "14px 16px", borderBottom: "1px solid #1e293b" }}>

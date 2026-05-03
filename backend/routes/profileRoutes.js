@@ -1,9 +1,9 @@
 module.exports = function registerProfileRoutes(app, deps) {
-  const { readProfileFromSheet, isProfileComplete, upsertProfileToSheet } = deps;
+  const { readProfileFromSheet, isProfileComplete, upsertProfileToSheet, requireAuth, assertSelfOrFail, runSerial } = deps;
 
-  app.get("/api/profile/:userId", (req, res) => {
+  app.get("/api/profile/:userId", requireAuth, (req, res) => {
     const userId = String(req.params.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+    if (!assertSelfOrFail(req, res, userId)) return;
     readProfileFromSheet(userId)
       .then((profile) => res.json({ ok: true, profile, isComplete: isProfileComplete(profile) }))
       .catch((error) =>
@@ -16,9 +16,9 @@ module.exports = function registerProfileRoutes(app, deps) {
       );
   });
 
-  app.post("/api/profile/:userId", (req, res) => {
+  app.post("/api/profile/:userId", requireAuth, async (req, res) => {
     const userId = String(req.params.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, message: "userId is required." });
+    if (!assertSelfOrFail(req, res, userId)) return;
     const body = req.body || {};
 
     const profile = {
@@ -35,15 +35,16 @@ module.exports = function registerProfileRoutes(app, deps) {
       createdAt: body.createdAt || new Date().toISOString(),
     };
 
-    upsertProfileToSheet(profile)
-      .then(() => res.json({ ok: true, profile, isComplete: isProfileComplete(profile) }))
-      .catch((error) =>
-        res.status(500).json({
-          ok: false,
-          message:
-            "Failed to store profile in Google Sheet. Ensure the Transactional_History spreadsheet is shared with your service account email.",
-          details: String(error.message || error),
-        })
-      );
+    try {
+      await runSerial(userId, () => upsertProfileToSheet(profile));
+      return res.json({ ok: true, profile, isComplete: isProfileComplete(profile) });
+    } catch (error) {
+      return res.status(500).json({
+        ok: false,
+        message:
+          "Failed to store profile in Google Sheet. Ensure the Transactional_History spreadsheet is shared with your service account email.",
+        details: String(error.message || error),
+      });
+    }
   });
 };

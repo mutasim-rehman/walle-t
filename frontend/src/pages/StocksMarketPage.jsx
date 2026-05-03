@@ -82,8 +82,8 @@ function OrderPanel({ symbol, price, cash, holdings, onFilled }) {
           <div style={{ display: "flex", background: "#1e293b", borderRadius: 6, border: "1px solid #334155" }}>
             <input type="number" min="1" step="1" value={qty} onChange={e => setQty(e.target.value)} style={{ flex: 1, background: "transparent", border: "none", padding: "10px 12px", color: "#f1f5f9", fontSize: "1rem", outline: "none" }} />
             <div style={{ display: "flex", flexDirection: "column", borderLeft: "1px solid #334155" }}>
-              <button type="button" onClick={() => setQty(q => String(Math.max(1, Number(q) + 1)))} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: "0 8px" }}><ChevronUp size={14} /></button>
-              <button type="button" onClick={() => setQty(q => String(Math.max(1, Number(q) - 1)))} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: "0 8px" }}><ChevronDown size={14} /></button>
+              <button type="button" aria-label="Increase quantity" onClick={() => setQty(q => String(Math.max(1, Number(q) + 1)))} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: "0 8px" }}><ChevronUp size={14} /></button>
+              <button type="button" aria-label="Decrease quantity" onClick={() => setQty(q => String(Math.max(1, Number(q) - 1)))} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: "0 8px" }}><ChevronDown size={14} /></button>
             </div>
           </div>
         </div>
@@ -179,10 +179,13 @@ export default function StocksMarketPage() {
   const [trades, setTrades] = useState([]);
   const [priceCache, setPriceCache] = useState({});
   const [priceRange, setPriceRange] = useState("180"); // days shown
+  const [chartError, setChartError] = useState("");
+  const [portfolioError, setPortfolioError] = useState("");
 
   // Load chart for selected symbol
   const loadChart = useCallback(async (sym) => {
     setLoadingChart(true);
+    setChartError("");
     try {
       const rows = await fetchPsxEodRows(sym);
       const days = Math.max(2, Number(priceRange) || 180);
@@ -193,8 +196,9 @@ export default function StocksMarketPage() {
       setSeries(mapped);
       const tick = priceTickFromRows(rows);
       if (tick) setPriceCache(prev => ({ ...prev, [sym]: tick }));
-    } catch {
+    } catch (err) {
       setSeries([]);
+      setChartError(err?.message || `Could not load ${sym} chart.`);
     }
     setLoadingChart(false);
   }, [priceRange]);
@@ -204,12 +208,15 @@ export default function StocksMarketPage() {
   // Load portfolio
   const loadPortfolio = useCallback(async () => {
     if (!currentUser?.id) return;
+    setPortfolioError("");
     try {
       const data = await apiGet(`/portfolio/${encodeURIComponent(currentUser.id)}`);
       setCash(data.cash ?? null);
       setHoldings(Array.isArray(data.holdings) ? data.holdings : []);
       setTrades(Array.isArray(data.transactions) ? data.transactions : []);
-    } catch { }
+    } catch (err) {
+      setPortfolioError(err?.message || "Could not load portfolio.");
+    }
   }, [currentUser?.id]);
 
   useEffect(() => { loadPortfolio(); }, [loadPortfolio]);
@@ -229,7 +236,7 @@ export default function StocksMarketPage() {
           if (tick && !cancelled) {
             setPriceCache((prev) => ({ ...prev, [item.sym]: tick }));
           }
-        } catch {
+      } catch {
           /* skip symbol */
         }
       });
@@ -256,7 +263,7 @@ export default function StocksMarketPage() {
   }
 
   return (
-    <AppShell title="Stock Market" subtitle="PSX equities — live prices, real-time order execution">
+    <AppShell title="Stock Market" subtitle="PSX equities (end-of-day prices) — simulated trade execution for educational use">
       <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 300px", gap: 16, minHeight: "calc(100vh - 120px)" }}>
 
         {/* ── Watchlist ── */}
@@ -293,11 +300,11 @@ export default function StocksMarketPage() {
                 <button onClick={() => loadChart(active.sym)} style={{ padding: "4px 10px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: "0.75rem", background: "#1e293b", color: "#64748b" }} disabled={loadingChart}><RefreshCw size={12} /></button>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginTop: 20 }}>
-              {[["HIGH", high], ["LOW", low], ["OPEN", first], ["VOLUME", "—"]].map(([l, v]) => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginTop: 20 }}>
+              {[["HIGH", high], ["LOW", low], ["OPEN", first]].map(([l, v]) => (
                 <div key={l} style={{ background: "#1e293b", borderRadius: 8, padding: "10px 14px" }}>
                   <div style={{ color: "#475569", fontSize: "0.7rem", marginBottom: 4 }}>{l}</div>
-                  <div style={{ color: "#f1f5f9", fontWeight: 700 }}>{v != null && v !== "—" ? fmt2(v) : "—"}</div>
+                  <div style={{ color: "#f1f5f9", fontWeight: 700 }}>{v != null ? fmt2(v) : "—"}</div>
                 </div>
               ))}
             </div>
@@ -310,8 +317,16 @@ export default function StocksMarketPage() {
                 <RefreshCw size={20} style={{ animation: "spin 1s linear infinite" }} />
                 <span style={{ marginLeft: 10 }}>Loading chart…</span>
               </div>
+            ) : chartError ? (
+              <div style={{ height: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#fca5a5", gap: 12 }}>
+                <AlertCircle size={20} />
+                <span style={{ fontSize: "0.85rem" }}>{chartError}</span>
+                <button type="button" onClick={() => loadChart(active.sym)} style={{ background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontSize: "0.8rem" }}>
+                  Retry
+                </button>
+              </div>
             ) : <PriceAreaChart series={series} height={300} valueDecimals={2} />}
-          </div>
+      </div>
 
           {/* Recent Trades */}
           <div style={{ background: "#0f172a", borderRadius: 12, border: "1px solid #1e293b" }}>
@@ -334,6 +349,14 @@ export default function StocksMarketPage() {
               <h3 style={{ color: "#f1f5f9", fontSize: "0.85rem", margin: 0 }}>PORTFOLIO</h3>
             </div>
             <div style={{ padding: "10px 16px" }}>
+              {portfolioError ? (
+                <div style={{ marginBottom: 10, padding: "8px 10px", borderRadius: 6, background: "#450a0a", border: "1px solid #ef4444" }}>
+                  <p style={{ margin: 0, color: "#fca5a5", fontSize: "0.75rem" }}>{portfolioError}</p>
+                  <button type="button" onClick={loadPortfolio} style={{ marginTop: 6, background: "#1e293b", color: "#cbd5e1", border: "1px solid #334155", borderRadius: 4, padding: "4px 8px", cursor: "pointer", fontSize: "0.7rem" }}>
+                    Retry
+                  </button>
+                </div>
+              ) : null}
               <div style={{ marginBottom: 10, fontSize: "0.8rem", display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#64748b" }}>Cash</span>
                 <span style={{ color: "#4ade80", fontWeight: 700 }}>{fmtMoney(cash)}</span>

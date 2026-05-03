@@ -1,3 +1,5 @@
+const ADVISOR_MAX_MESSAGE_LENGTH = 4000;
+
 module.exports = function registerAdvisorRoutes(app, deps) {
   const {
     getGeminiClient,
@@ -19,15 +21,20 @@ module.exports = function registerAdvisorRoutes(app, deps) {
     isGeminiQuotaError,
     classifyGeminiError,
     GEMINI_MODEL,
+    requireAuth,
   } = deps;
 
-  app.post("/api/advisor", async (req, res) => {
-    const { userId, message } = req.body || {};
-    if (!userId || !String(userId).trim()) {
-      return res.status(400).json({ ok: false, message: "userId is required." });
-    }
+  app.post("/api/advisor", requireAuth, async (req, res) => {
+    const { message } = req.body || {};
     if (!message || !String(message).trim()) {
       return res.status(400).json({ ok: false, message: "message is required." });
+    }
+    const trimmedMessage = String(message).trim();
+    if (trimmedMessage.length > ADVISOR_MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        ok: false,
+        message: `Message is too long. Maximum is ${ADVISOR_MAX_MESSAGE_LENGTH} characters.`,
+      });
     }
 
     const ai = getGeminiClient();
@@ -49,7 +56,7 @@ module.exports = function registerAdvisorRoutes(app, deps) {
       });
     }
 
-    const user = users.find((entry) => entry.id === String(userId).trim());
+    const user = users.find((entry) => entry.id === req.user.id);
     if (!user) {
       return res.status(404).json({ ok: false, message: "User not found." });
     }
@@ -68,7 +75,9 @@ module.exports = function registerAdvisorRoutes(app, deps) {
       });
     }
 
-    const activities = readActivities().filter((activity) => activity.userId === user.id).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const activities = readActivities()
+      .filter((activity) => activity.userId === user.id)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     const portfolio = buildPortfolioSummary(activities);
 
     let profile = null;
@@ -105,7 +114,7 @@ module.exports = function registerAdvisorRoutes(app, deps) {
       "This is educational analysis, not professional financial advice.",
       "",
       `Date: ${today}`,
-      `User: ${user.username} (${user.email})`,
+      `User: ${user.username}`,
       "",
       "Saved activity context:",
       portfolio.summary,
@@ -117,7 +126,7 @@ module.exports = function registerAdvisorRoutes(app, deps) {
       ledgerSummary,
       "",
       "User question:",
-      String(message).trim(),
+      trimmedMessage,
       "",
       "Answer format:",
       "1. Short answer",
@@ -164,12 +173,11 @@ module.exports = function registerAdvisorRoutes(app, deps) {
         sources: extractGroundingSources(response),
       });
     } catch (error) {
-      console.error("Advisor request failed:", error);
+      console.error("Advisor request failed:", error?.message || error);
       const classified = classifyGeminiError(error);
       return res.status(classified.status).json({
         ok: false,
         message: classified.message,
-        details: String(error.message || error),
       });
     }
   });

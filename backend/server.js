@@ -36,14 +36,92 @@ const MODEL_PREDICTIONS_PATH = path.resolve(
   process.env.MODEL_PREDICTIONS_PATH || path.join(__dirname, "data", "psx_model_symbol_predictions.json")
 );
 
-const PORT = Number(process.env.BACKEND_PORT || 4001);
+const PORT = Number(process.env.PORT || process.env.BACKEND_PORT || 4001);
+const IS_PRODUCTION = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
+
+function stripTrailingSlash(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+const PROVIDER_TIMEOUT_MS = Number(process.env.PROVIDER_TIMEOUT_MS || 10000);
+
+function sanitizeSheetCell(value) {
+  if (value == null) return "";
+  if (typeof value !== "string") return value;
+  if (value.length === 0) return value;
+  const first = value.charAt(0);
+  if (first === "=" || first === "+" || first === "-" || first === "@") {
+    return `'${value}`;
+  }
+  return value;
+}
+
+function sanitizeRow(row) {
+  return Array.isArray(row) ? row.map(sanitizeSheetCell) : row;
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = PROVIDER_TIMEOUT_MS) {
+  const ms = Number(timeoutMs) || PROVIDER_TIMEOUT_MS;
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(ms) });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
+/**
+ * SPA origin exposed to users (e.g. Vercel). Email links hit this host; `/api/*` must rewrite to Render backend.
+ */
+function resolvePublicAppOrigin() {
+  const explicit = stripTrailingSlash(
+    process.env.PUBLIC_APP_URL ||
+      process.env.FRONTEND_PUBLIC_URL ||
+      process.env.APP_PUBLIC_URL ||
+      process.env.CLIENT_URL ||
+      ""
+  );
+  if (explicit && /^https?:\/\//i.test(explicit)) return explicit;
+
+  const bb = stripTrailingSlash(process.env.BACKEND_BASE_URL || "");
+  if (bb && /^https?:\/\//i.test(bb)) {
+    const localhostish = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])/i.test(bb);
+    if (!localhostish) return bb;
+  }
+
+  const onDeployHost =
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.RENDER) ||
+    Boolean(process.env.RENDER_EXTERNAL_URL);
+
+  return onDeployHost ? "https://walle-t.vercel.app" : stripTrailingSlash(`http://localhost:${PORT}`);
+}
+
 const ACTIVITIES_PATH = path.resolve(__dirname, "data", "activities.json");
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
 const DEFAULT_STARTING_INVESTMENT_USD = 10_000;
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.set("trust proxy", 1);
+
+const DEFAULT_CORS_ORIGINS = "https://walle-t.vercel.app,http://localhost:5173";
+const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || DEFAULT_CORS_ORIGINS)
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (CORS_ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
+    credentials: true,
+  })
+);
+
+app.use(express.json({ limit: "256kb" }));
 
 const rateWindowMs = Number(process.env.API_RATE_WINDOW_MS || 60_000);
 const rateMax = Number(process.env.API_RATE_MAX || 240);
@@ -52,9 +130,53 @@ const advisorPromptBuckets = new Map();
 const ADVISOR_MIN_INTERVAL_MS = 5 * 60 * 1000;
 const ADVISOR_MAX_IN_WINDOW = 3;
 const ADVISOR_WINDOW_MS = 6 * 60 * 60 * 1000;
+const RATE_BUCKET_MAX_KEYS = Number(process.env.RATE_BUCKET_MAX_KEYS || 10000);
+const RATE_BUCKET_SWEEP_MS = Number(process.env.RATE_BUCKET_SWEEP_MS || 60 * 1000);
+
+const rateBucketSweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [k, bucket] of rateBuckets) {
+    if (!bucket || now > Number(bucket.resetAt || 0) + 5 * 60 * 1000) {
+      rateBuckets.delete(k);
+    }
+  }
+  if (rateBuckets.size > RATE_BUCKET_MAX_KEYS) {
+    const drop = rateBuckets.size - RATE_BUCKET_MAX_KEYS;
+    let i = 0;
+    for (const k of rateBuckets.keys()) {
+      if (i++ >= drop) break;
+      rateBuckets.delete(k);
+    }
+  }
+  const earliest = now - ADVISOR_WINDOW_MS;
+  for (const [k, list] of advisorPromptBuckets) {
+    const filtered = Array.isArray(list) ? list.filter((ts) => ts >= earliest) : [];
+    if (filtered.length === 0) advisorPromptBuckets.delete(k);
+    else if (filtered.length !== list.length) advisorPromptBuckets.set(k, filtered);
+  }
+}, RATE_BUCKET_SWEEP_MS);
+if (typeof rateBucketSweepTimer.unref === "function") rateBucketSweepTimer.unref();
 const PASSWORD_RESET_TOKEN_TTL_MS = Number(process.env.PASSWORD_RESET_TOKEN_TTL_MS || 30 * 60 * 1000);
-const PASSWORD_RESET_SECRET =
-  process.env.PASSWORD_RESET_SECRET || process.env.GEMINI_API_KEY || "walle-t-password-reset-secret";
+const SESSION_TOKEN_TTL_MS = Number(process.env.SESSION_TOKEN_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+
+function requireSecret(envName, fallbackForDev) {
+  const value = process.env[envName];
+  if (value && value.length >= 16) return value;
+  if (IS_PRODUCTION) {
+    console.error(`[fatal] ${envName} is required in production`);
+    throw new Error(`${envName} is required in production`);
+  }
+  return fallbackForDev;
+}
+
+const PASSWORD_RESET_SECRET = requireSecret(
+  "PASSWORD_RESET_SECRET",
+  "dev-password-reset-secret-change-me-please"
+);
+const SESSION_SECRET = requireSecret(
+  "SESSION_SECRET",
+  "dev-session-secret-change-me-please-min-len"
+);
 
 app.use("/api", (req, res, next) => {
   const key = `${req.ip || "unknown"}:${req.path}`;
@@ -188,6 +310,24 @@ let usersCache = {
   users: null,
   fetchedAt: 0,
 };
+
+let sheetsReadOnlyApi = null;
+let sheetsReadOnlyApiKey = "";
+
+function getGoogleSheetsReadOnly() {
+  const { clientEmail, privateKey } = getGoogleConfig();
+  if (!clientEmail || !privateKey) return null;
+  const key = crypto.createHash("sha256").update(`${clientEmail}\n${privateKey}`).digest("hex").slice(0, 32);
+  if (sheetsReadOnlyApi && sheetsReadOnlyApiKey === key) return sheetsReadOnlyApi;
+  sheetsReadOnlyApiKey = key;
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+  });
+  sheetsReadOnlyApi = google.sheets({ version: "v4", auth });
+  return sheetsReadOnlyApi;
+}
 
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -595,7 +735,7 @@ async function appendTransactionRow(tx) {
         spreadsheetId: sheetId,
         range,
         valueInputOption: "RAW",
-        requestBody: { values: [row] },
+        requestBody: { values: [sanitizeRow(row)] },
       });
       return;
     } catch (error) {
@@ -852,7 +992,7 @@ async function upsertProfileToSheet(profile) {
       spreadsheetId: sheetId,
       range: updateRange,
       valueInputOption: "RAW",
-      requestBody: { values: [rowValues] },
+      requestBody: { values: [sanitizeRow(rowValues)] },
     });
     return;
   }
@@ -864,7 +1004,7 @@ async function upsertProfileToSheet(profile) {
         spreadsheetId: sheetId,
         range,
         valueInputOption: "RAW",
-        requestBody: { values: [rowValues] },
+        requestBody: { values: [sanitizeRow(rowValues)] },
       });
       return;
     } catch (error) {
@@ -873,27 +1013,6 @@ async function upsertProfileToSheet(profile) {
   }
 
   throw lastError || new Error("Unknown Google Sheets append error");
-}
-
-function readProfiles() {
-  // Deprecated: profiles are now stored in Google Sheets.
-  return [];
-}
-
-function writeProfiles(profiles) {
-  // Deprecated: profiles are now stored in Google Sheets.
-  void profiles;
-}
-
-function getProfileByUserId(userId) {
-  // Deprecated local lookup
-  void userId;
-  return null;
-}
-
-function upsertProfile(profile) {
-  // Deprecated local upsert
-  return profile;
 }
 
 function isProfileComplete(profile) {
@@ -905,6 +1024,8 @@ function isProfileComplete(profile) {
 function computeLedgerState(transactions) {
   let cash = 0;
   const holdings = new Map();
+  const forexPositions = new Map();
+  const optionPositions = new Map();
 
   const chron = [...transactions].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
   for (const tx of chron) {
@@ -914,7 +1035,7 @@ function computeLedgerState(transactions) {
     const amount = tx.amount == null ? 0 : Number(tx.amount);
 
     if (type === "DEPOSIT" || type === "CASH_IN") {
-      cash += amount;
+      cash += Math.abs(amount);
     } else if (type === "WITHDRAW" || type === "CASH_OUT") {
       cash -= Math.abs(amount);
     } else if (type === "BUY") {
@@ -925,21 +1046,41 @@ function computeLedgerState(transactions) {
       if (symbol && qty > 0) holdings.set(symbol, (holdings.get(symbol) || 0) - qty);
     } else if (type === "PORTFOLIO_IMPORT") {
       if (symbol && qty) holdings.set(symbol, (holdings.get(symbol) || 0) + Number(qty));
-    } else if (type === "FOREX_BUY" || type === "OPTION_BUY") {
+    } else if (type === "FOREX_BUY") {
       cash -= Math.abs(amount);
-    } else if (type === "FOREX_SELL" || type === "OPTION_SELL") {
+      if (symbol && qty > 0) forexPositions.set(symbol, (forexPositions.get(symbol) || 0) + qty);
+    } else if (type === "FOREX_SELL") {
       cash += Math.abs(amount);
+      if (symbol && qty > 0) forexPositions.set(symbol, (forexPositions.get(symbol) || 0) - qty);
+    } else if (type === "OPTION_BUY") {
+      cash -= Math.abs(amount);
+      if (symbol && qty > 0) optionPositions.set(symbol, (optionPositions.get(symbol) || 0) + qty);
+    } else if (type === "OPTION_SELL") {
+      cash += Math.abs(amount);
+      if (symbol && qty > 0) optionPositions.set(symbol, (optionPositions.get(symbol) || 0) - qty);
     }
   }
 
   for (const [sym, q] of holdings.entries()) {
     if (!Number.isFinite(q) || Math.abs(q) < 1e-9) holdings.delete(sym);
   }
+  for (const [pair, q] of forexPositions.entries()) {
+    if (!Number.isFinite(q) || Math.abs(q) < 1e-9) forexPositions.delete(pair);
+  }
+  for (const [optSym, q] of optionPositions.entries()) {
+    if (!Number.isFinite(q) || Math.abs(q) < 1e-9) optionPositions.delete(optSym);
+  }
 
   return {
     cash: Number.isFinite(cash) ? cash : 0,
     holdings: [...holdings.entries()]
       .map(([symbol, qty]) => ({ symbol, qty }))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol)),
+    forexPositions: [...forexPositions.entries()]
+      .map(([pair, units]) => ({ pair, units }))
+      .sort((a, b) => a.pair.localeCompare(b.pair)),
+    optionPositions: [...optionPositions.entries()]
+      .map(([symbol, contracts]) => ({ symbol, contracts }))
       .sort((a, b) => a.symbol.localeCompare(b.symbol)),
   };
 }
@@ -949,7 +1090,7 @@ async function fetchPsxTimeseriesPayload(type, symbol) {
   const sym = String(symbol || "").trim().toUpperCase();
   if (!sym || !["eod", "int"].includes(t)) throw new Error("PSX timeseries requires symbol and type eod|int");
   const url = `https://dps.psx.com.pk/timeseries/${t}/${encodeURIComponent(sym)}`;
-  const res = await fetch(url, { method: "GET" });
+  const res = await fetchWithTimeout(url, { method: "GET" });
   if (!res.ok) throw new Error(`PSX request failed (${res.status})`);
   return res.json();
 }
@@ -966,53 +1107,9 @@ async function fetchPsxLatestPrice(symbol) {
   return { price, ts: last?.[0] ?? null };
 }
 
-async function appendSignupToSheet({ email, username }) {
-  const { sheetId, clientEmail, privateKey, sheetName } = getGoogleConfig();
-  if (!sheetId || !clientEmail || !privateKey) {
-    throw new Error("Google Sheets env vars are incomplete");
-  }
-
-  const auth = new google.auth.JWT({
-    email: clientEmail,
-    key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-
-  const sheets = google.sheets({ version: "v4", auth });
-  const row = [
-    new Date().toISOString(),
-    username,
-    email,
-    "signup",
-  ];
-
-  const candidateRanges = [];
-  if (sheetName) candidateRanges.push(`${sheetName}!A:D`);
-  candidateRanges.push("Users!A:D");
-  candidateRanges.push("Sheet1!A:D");
-  candidateRanges.push("A:D");
-
-  let lastError = null;
-  for (const range of candidateRanges) {
-    try {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: sheetId,
-        range,
-        valueInputOption: "RAW",
-        requestBody: {
-          values: [row],
-        },
-      });
-      return;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError || new Error("Unknown Google Sheets append error");
-}
 
 async function readUsersFromSheet({ forceRefresh = false } = {}) {
-  const cacheTtlMs = Number(process.env.USERS_CACHE_TTL_MS || 30000);
+  const cacheTtlMs = Number(process.env.USERS_CACHE_TTL_MS || 120000);
   const now = Date.now();
   if (
     !forceRefresh &&
@@ -1024,17 +1121,10 @@ async function readUsersFromSheet({ forceRefresh = false } = {}) {
   }
 
   const { sheetId, clientEmail, privateKey, sheetName } = getGoogleConfig();
-  if (!sheetId || !clientEmail || !privateKey) {
+  const sheets = getGoogleSheetsReadOnly();
+  if (!sheetId || !clientEmail || !privateKey || !sheets) {
     throw new Error("Google Sheets env vars are incomplete");
   }
-
-  const auth = new google.auth.JWT({
-    email: clientEmail,
-    key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-  });
-
-  const sheets = google.sheets({ version: "v4", auth });
   const candidateRanges = [];
   if (sheetName) candidateRanges.push(`${sheetName}!A:F`);
   candidateRanges.push("Users!A:F");
@@ -1108,7 +1198,7 @@ async function appendUserToSheet(user) {
         spreadsheetId: sheetId,
         range,
         valueInputOption: "RAW",
-        requestBody: { values: [row] },
+        requestBody: { values: [sanitizeRow(row)] },
       });
       usersCache = { users: null, fetchedAt: 0 };
       return;
@@ -1242,7 +1332,7 @@ async function createUserAccount({ email, username, password }) {
     return { ok: false, status: 409, message: "Username already exists." };
   }
 
-  const passwordHash = await bcrypt.hash(String(password), 10);
+  const passwordHash = await bcrypt.hash(String(password), 12);
   const user = {
     id: crypto.randomUUID(),
     email: String(email).trim(),
@@ -1383,7 +1473,11 @@ async function resolveLoginLocation(req) {
   }
 
   try {
-    const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(normalized)}?fields=status,city,country`);
+    const res = await fetchWithTimeout(
+      `http://ip-api.com/json/${encodeURIComponent(normalized)}?fields=status,city,country`,
+      {},
+      5000
+    );
     if (!res.ok) return "Unknown location";
     const payload = await res.json();
     if (String(payload?.status || "").toLowerCase() !== "success") return "Unknown location";
@@ -1452,6 +1546,121 @@ function verifyPasswordResetToken(token) {
   } catch {
     return { ok: false, reason: "Invalid token payload." };
   }
+}
+
+function signSessionToken(user) {
+  const now = Date.now();
+  const payloadObj = {
+    uid: String(user?.id || ""),
+    email: String(user?.email || "").toLowerCase(),
+    username: String(user?.username || ""),
+    iat: now,
+    exp: now + SESSION_TOKEN_TTL_MS,
+  };
+  const payload = toBase64Url(JSON.stringify(payloadObj));
+  const sig = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+function verifySessionToken(token) {
+  const raw = String(token || "").trim();
+  const [payload, signature] = raw.split(".");
+  if (!payload || !signature) return { ok: false, reason: "Invalid token format." };
+  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+  const a = Buffer.from(signature, "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, reason: "Invalid session signature." };
+  }
+  try {
+    const data = JSON.parse(fromBase64Url(payload));
+    if (!data?.uid) return { ok: false, reason: "Invalid session payload." };
+    if (Date.now() > Number(data?.exp || 0)) {
+      return { ok: false, reason: "Session expired." };
+    }
+    return { ok: true, data };
+  } catch {
+    return { ok: false, reason: "Invalid session payload." };
+  }
+}
+
+function extractBearerToken(req) {
+  const header = req.headers?.authorization || req.headers?.Authorization || "";
+  const m = String(header).match(/^Bearer\s+(.+)$/i);
+  if (m && m[1]) return m[1].trim();
+  // Fallback: allow ?accessToken= for the password-reset HTML form/links if needed
+  const q = req.query?.accessToken;
+  if (typeof q === "string" && q.length > 0) return q.trim();
+  return null;
+}
+
+function requireAuth(req, res, next) {
+  const token = extractBearerToken(req);
+  if (!token) {
+    return res.status(401).json({ ok: false, message: "Authentication required." });
+  }
+  const verified = verifySessionToken(token);
+  if (!verified.ok) {
+    return res.status(401).json({ ok: false, message: verified.reason || "Invalid session." });
+  }
+  req.user = {
+    id: String(verified.data.uid),
+    email: String(verified.data.email || ""),
+    username: String(verified.data.username || ""),
+  };
+  return next();
+}
+
+function assertSelfOrFail(req, res, paramId) {
+  const id = String(paramId || "").trim();
+  if (!id) {
+    res.status(400).json({ ok: false, message: "userId is required." });
+    return false;
+  }
+  if (req.user?.id !== id) {
+    res.status(403).json({ ok: false, message: "Forbidden: you can only access your own data." });
+    return false;
+  }
+  return true;
+}
+
+const adminSessions = new Map();
+const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+function generateAdminToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function isAdminTokenValid(token) {
+  const session = adminSessions.get(String(token || "").trim());
+  if (!session) return false;
+  if (Date.now() - session.createdAt > ADMIN_SESSION_TTL_MS) {
+    adminSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function requireAdmin(req, res, next) {
+  const token = req.headers["x-admin-token"] || "";
+  if (!isAdminTokenValid(String(token).trim())) {
+    return res.status(401).json({ ok: false, message: "Unauthorized. Admin token missing or expired." });
+  }
+  return next();
+}
+
+const userSerialQueues = new Map();
+function runSerial(userId, fn) {
+  const key = String(userId || "").trim() || "anon";
+  const previous = userSerialQueues.get(key) || Promise.resolve();
+  const next = previous.catch(() => undefined).then(() => fn());
+  userSerialQueues.set(
+    key,
+    next.finally(() => {
+      if (userSerialQueues.get(key) === next) userSerialQueues.delete(key);
+    })
+  );
+  return next;
 }
 
 async function updateUserPasswordInSheet({ userId, passwordHash }) {
@@ -1587,7 +1796,7 @@ async function fetchForexFromProvider(pair) {
   const rangeUrl = `https://api.frankfurter.app/${startStr}..${endStr}?from=${parsed.base}&to=${parsed.quote}`;
   const latestUrl = `https://api.frankfurter.app/latest?from=${parsed.base}&to=${parsed.quote}`;
 
-  const [rangeRes, latestRes] = await Promise.all([fetch(rangeUrl), fetch(latestUrl)]);
+  const [rangeRes, latestRes] = await Promise.all([fetchWithTimeout(rangeUrl), fetchWithTimeout(latestUrl)]);
   if (!rangeRes.ok || !latestRes.ok) {
     throw new Error(`Forex provider failed (range=${rangeRes.status}, latest=${latestRes.status})`);
   }
@@ -1622,7 +1831,7 @@ async function fetchOptionsFromProvider(symbol) {
 
   const baseUrl = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(sym)}`;
   const headers = { "user-agent": "Mozilla/5.0" };
-  const mainRes = await fetch(baseUrl, { headers });
+  const mainRes = await fetchWithTimeout(baseUrl, { headers });
   if (!mainRes.ok) throw new Error(`Options provider failed (${mainRes.status})`);
   const main = await mainRes.json();
   const result = main?.optionChain?.result?.[0];
@@ -1632,7 +1841,7 @@ async function fetchOptionsFromProvider(symbol) {
   const snapshots = [{ data: result, expiryTs: result?.options?.[0]?.expirationDate || expirationDates[0] }];
   for (const ts of expirationDates.slice(1)) {
     try {
-      const r = await fetch(`${baseUrl}?date=${ts}`, { headers });
+      const r = await fetchWithTimeout(`${baseUrl}?date=${ts}`, { headers });
       if (!r.ok) continue;
       const j = await r.json();
       const d = j?.optionChain?.result?.[0];
@@ -1759,11 +1968,13 @@ registerHealthRoutes(app, {
   getProfilesSheetConfig,
   getGeminiClient,
   GEMINI_MODEL,
+  requireAdmin,
 });
 
 registerAuthRoutes(app, {
   createUserAccount,
   validatePasswordStrength,
+  resolvePublicAppOrigin,
   safeUser,
   readProfileFromSheet,
   upsertProfileToSheet,
@@ -1774,7 +1985,6 @@ registerAuthRoutes(app, {
   readUsersFromSheet,
   resolveLoginLocation,
   createPasswordResetToken,
-  PORT,
   sendAuthEmail,
   buildLoginEmailHtml,
   verifyPasswordResetToken,
@@ -1782,6 +1992,9 @@ registerAuthRoutes(app, {
   bcrypt,
   updateUserPasswordInSheet,
   escapeHtml,
+  signSessionToken,
+  requireAuth,
+  runSerial,
 });
 
 registerActivitiesRoutes(app, {
@@ -1789,6 +2002,8 @@ registerActivitiesRoutes(app, {
   writeActivities,
   readUsersFromSheet,
   crypto,
+  requireAuth,
+  assertSelfOrFail,
 });
 
 registerAdvisorRoutes(app, {
@@ -1811,12 +2026,16 @@ registerAdvisorRoutes(app, {
   isGeminiQuotaError,
   classifyGeminiError,
   GEMINI_MODEL,
+  requireAuth,
 });
 
 registerProfileRoutes(app, {
   readProfileFromSheet,
   isProfileComplete,
   upsertProfileToSheet,
+  requireAuth,
+  assertSelfOrFail,
+  runSerial,
 });
 
 registerOnboardingRoutes(app, {
@@ -1827,6 +2046,9 @@ registerOnboardingRoutes(app, {
   DEFAULT_STARTING_INVESTMENT_USD,
   appendTransactionRow,
   isProfileComplete,
+  requireAuth,
+  assertSelfOrFail,
+  runSerial,
 });
 
 registerPortfolioRoutes(app, {
@@ -1834,6 +2056,8 @@ registerPortfolioRoutes(app, {
   readTransactionsForUser,
   isProfileComplete,
   computeLedgerState,
+  requireAuth,
+  assertSelfOrFail,
 });
 
 registerTradeRoutes(app, {
@@ -1845,6 +2069,8 @@ registerTradeRoutes(app, {
   hashString,
   generateSyntheticSeries,
   fetchOptionsFromProvider,
+  requireAuth,
+  runSerial,
 });
 
 registerForecastRoutes(app, {
@@ -1856,6 +2082,7 @@ registerForecastRoutes(app, {
   buildNetWorthProjection,
   getGeminiClient,
   GEMINI_MODEL,
+  requireAuth,
 });
 
 registerModelPredictionRoutes(app, {
@@ -1865,6 +2092,9 @@ registerModelPredictionRoutes(app, {
 registerSettingsRoutes(app, {
   readProfileFromSheet,
   upsertProfileToSheet,
+  requireAuth,
+  assertSelfOrFail,
+  runSerial,
 });
 
 registerMarketRoutes(app, {
@@ -1878,6 +2108,8 @@ registerMarketRoutes(app, {
 registerRiskRoutes(app, {
   readTransactionsForUser,
   clamp,
+  requireAuth,
+  assertSelfOrFail,
 });
 
 registerAdminRoutes(app, {
@@ -1887,6 +2119,10 @@ registerAdminRoutes(app, {
   readProfileFromSheet,
   deleteUserFromSheet,
   priceHoldings,
+  requireAdmin,
+  generateAdminToken,
+  adminSessions,
+  ADMIN_SESSION_TTL_MS,
 });
 
 app.listen(PORT, () => {

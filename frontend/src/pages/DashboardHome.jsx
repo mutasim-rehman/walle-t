@@ -14,11 +14,16 @@ export default function DashboardHome() {
   const { currentUser } = useAuth();
   const [portfolio, setPortfolio] = useState(null);
   const [risk, setRisk] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       if (!currentUser?.id) return;
+      setLoading(true);
+      setError('');
       try {
         const [p, r] = await Promise.all([
           apiGet(`/portfolio/${encodeURIComponent(currentUser.id)}`),
@@ -28,18 +33,39 @@ export default function DashboardHome() {
           setPortfolio(p);
           setRisk(r.risk);
         }
-      } catch {
-        // Ignore on home.
+      } catch (err) {
+        if (mounted) setError(err?.message || 'Failed to load dashboard.');
+      } finally {
+        if (mounted) setLoading(false);
       }
     }
     load();
     return () => {
       mounted = false;
     };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, reloadKey]);
 
   return (
     <AppShell title="Dashboard" subtitle="Your trading and wealth command center.">
+      {error ? (
+        <div
+          className="finance-card"
+          style={{ padding: 12, marginBottom: 12, borderColor: '#fca5a5', background: '#fef2f2' }}
+        >
+          <p style={{ margin: 0, color: '#991b1b', fontWeight: 600 }}>{error}</p>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ marginTop: 8 }}
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {loading && !error ? (
+        <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>Loading dashboard...</p>
+      ) : null}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(180px,1fr))', gap: 14 }}>
         <div className="finance-card" style={{ padding: 16 }}>
           <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Simulated Cash</p>
@@ -51,7 +77,7 @@ export default function DashboardHome() {
         </div>
         <div className="finance-card" style={{ padding: 16 }}>
           <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Risk Score</p>
-          <h3>{risk?.score ?? '-'}/100</h3>
+          <h3>{risk?.score == null ? '-' : `${risk.score}/100`}</h3>
         </div>
         <div className="finance-card" style={{ padding: 16 }}>
           <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Top Concentration</p>
