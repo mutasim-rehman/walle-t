@@ -22,6 +22,7 @@ export default function ProfilePage() {
   });
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [hasSavedProfile, setHasSavedProfile] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -32,6 +33,7 @@ export default function ProfilePage() {
         const data = await apiGet(`/profile/${encodeURIComponent(currentUser.id)}`);
         const p = data.profile || {};
         if (!mounted) return;
+        setHasSavedProfile(Boolean(data.profile?.userId));
         setForm({
           age: p.age ?? '',
           country: p.country || '',
@@ -74,6 +76,7 @@ export default function ProfilePage() {
         },
       });
       setMsg('Profile updated successfully.');
+      setHasSavedProfile(true);
     } catch (error) {
       setErr(error.message);
     }
@@ -81,6 +84,11 @@ export default function ProfilePage() {
 
   return (
     <AppShell title="Profile" subtitle="Manage your personal and financial baseline profile.">
+      {!err && !hasSavedProfile ? (
+        <p className="finance-card" style={{ padding: 14, marginBottom: 12, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+          No profile row found in your sheet yet. Fill in and save — data is stored in the Profiles tab of your Transactional_History spreadsheet.
+        </p>
+      ) : null}
       <form className="finance-card" style={{ padding: 16 }} onSubmit={save}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(200px,1fr))', gap: 10 }}>
           <input className="input-field" placeholder="Age" value={form.age} onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))} />

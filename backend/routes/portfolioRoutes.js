@@ -13,7 +13,7 @@ module.exports = function registerPortfolioRoutes(app, deps) {
     }
     let transactions = [];
     try {
-      transactions = await readTransactionsForUser(userId, { limit: 300 });
+      transactions = await readTransactionsForUser(userId, { limit: 800 });
     } catch (error) {
       return res.status(500).json({
         ok: false,

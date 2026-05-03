@@ -539,6 +539,23 @@ async function ensureTransactionHeaderRow(sheets, spreadsheetId, sheetName) {
   });
 }
 
+function stripLikelyTransactionHeader(values) {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  const [a, b] = values[0] || [];
+  if (String(a || "").toLowerCase() === "createdat" && String(b || "").toLowerCase() === "userid") {
+    return values.slice(1);
+  }
+  return values;
+}
+
+function stripLikelyProfileHeader(values) {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  if (String(values[0][0] || "").toLowerCase() === "userid") {
+    return values.slice(1);
+  }
+  return values;
+}
+
 async function appendTransactionRow(tx) {
   const { sheetId, clientEmail, privateKey, sheetName } = getTransactionalSheetConfig();
   const sheets = makeSheetsClient({
@@ -606,7 +623,10 @@ async function readTransactionsForUser(userId, { limit = 200 } = {}) {
         spreadsheetId: sheetId,
         range,
       });
-      rows = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      const values = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      const body = stripLikelyTransactionHeader(values);
+      if (body.length === 0) continue;
+      rows = body;
       break;
     } catch (error) {
       lastError = error;
@@ -619,7 +639,6 @@ async function readTransactionsForUser(userId, { limit = 200 } = {}) {
   for (const row of rows) {
     const [createdAt, rowUserId, type, symbol, qty, price, amount, cashAfter, note, metaJson] = row;
     if (!rowUserId || String(rowUserId).trim() !== key) continue;
-    if (String(createdAt).toLowerCase() === "createdat") continue;
 
     const parsed = {
       createdAt: createdAt || "",
@@ -717,7 +736,10 @@ async function readProfileFromSheet(userId) {
   for (const range of candidateRanges) {
     try {
       const resp = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range });
-      rows = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      const values = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      const body = stripLikelyProfileHeader(values);
+      if (body.length === 0) continue;
+      rows = body;
       break;
     } catch (error) {
       lastError = error;
@@ -793,7 +815,10 @@ async function upsertProfileToSheet(profile) {
   for (const range of candidateRanges) {
     try {
       const resp = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range });
-      rows = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      const values = Array.isArray(resp?.data?.values) ? resp.data.values : [];
+      const body = stripLikelyProfileHeader(values);
+      if (body.length === 0) continue;
+      rows = values;
       usedRange = range;
       break;
     } catch (error) {
@@ -900,6 +925,10 @@ function computeLedgerState(transactions) {
       if (symbol && qty > 0) holdings.set(symbol, (holdings.get(symbol) || 0) - qty);
     } else if (type === "PORTFOLIO_IMPORT") {
       if (symbol && qty) holdings.set(symbol, (holdings.get(symbol) || 0) + Number(qty));
+    } else if (type === "FOREX_BUY" || type === "OPTION_BUY") {
+      cash -= Math.abs(amount);
+    } else if (type === "FOREX_SELL" || type === "OPTION_SELL") {
+      cash += Math.abs(amount);
     }
   }
 

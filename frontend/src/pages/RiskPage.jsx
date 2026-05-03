@@ -15,23 +15,34 @@ export default function RiskPage() {
   const [risk, setRisk] = useState(null);
   const [forecast, setForecast] = useState(null);
   const [error, setError] = useState('');
+  const [forecastNote, setForecastNote] = useState('');
 
   useEffect(() => {
     let mounted = true;
     async function load() {
       if (!currentUser?.id) return;
       setError('');
+      setForecastNote('');
       try {
-        const [r, f] = await Promise.all([
-          apiGet(`/risk/${encodeURIComponent(currentUser.id)}`),
-          apiPost('/forecast', { userId: currentUser.id }),
-        ]);
+        const r = await apiGet(`/risk/${encodeURIComponent(currentUser.id)}`);
+        if (mounted) setRisk(r.risk);
+      } catch (err) {
         if (mounted) {
-          setRisk(r.risk);
+          setRisk(null);
+          setError(err.message || 'Risk metrics unavailable.');
+        }
+      }
+      try {
+        const f = await apiPost('/forecast', { userId: currentUser.id });
+        if (mounted) {
           setForecast(f.series);
+          setForecastNote('');
         }
       } catch (err) {
-        if (mounted) setError(err.message);
+        if (mounted) {
+          setForecast(null);
+          setForecastNote(err.message || 'Net worth projection unavailable.');
+        }
       }
     }
     load();
@@ -76,6 +87,9 @@ export default function RiskPage() {
 
       <div className="finance-card" style={{ marginTop: 12, padding: 16 }}>
         <h3 style={{ marginBottom: 8 }}>Net Worth Scenarios</h3>
+        {forecastNote ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: 10 }}>{forecastNote}</p>
+        ) : null}
         <SimpleLineChart series={forecast?.base || []} secondarySeries={forecast?.best || []} />
       </div>
     </AppShell>
