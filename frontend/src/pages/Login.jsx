@@ -10,6 +10,14 @@ function toNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function validateSignupPassword(password) {
+  const p = String(password || '');
+  if (p.length < 8) return 'Password must be at least 8 characters.';
+  if (!/\d/.test(p)) return 'Password must include at least one number.';
+  if (!/[^A-Za-z0-9]/.test(p)) return 'Password must include at least one symbol.';
+  return null;
+}
+
 const Login = () => {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
@@ -51,9 +59,10 @@ const Login = () => {
         setMessage('Email is required.');
         return;
       }
-      if (password.length < 6) {
+      const pwErr = validateSignupPassword(password);
+      if (pwErr) {
         setIsError(true);
-        setMessage('Password must be at least 6 characters.');
+        setMessage(pwErr);
         return;
       }
       if (password !== confirmPassword) {
@@ -212,7 +221,7 @@ const Login = () => {
                 type={showPassword ? 'text' : 'password'}
                 className="input-field"
                 style={{ paddingLeft: '44px', paddingRight: '44px', borderColor: isError ? 'var(--status-negative)' : '' }}
-                placeholder={mode === 'signup' ? 'Create password (min 6 chars)' : 'Enter password'}
+                placeholder={mode === 'signup' ? 'Min 8 chars, include a number and symbol' : 'Enter password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />

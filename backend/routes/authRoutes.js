@@ -21,6 +21,7 @@ module.exports = function registerAuthRoutes(app, deps) {
     bcrypt,
     updateUserPasswordInSheet,
     escapeHtml,
+    validatePasswordStrength,
   } = deps;
 
   app.post("/api/auth/signup", async (req, res) => {
@@ -216,7 +217,7 @@ module.exports = function registerAuthRoutes(app, deps) {
       <p style="margin:0 0 16px 0;color:#475569;">Enter your new password to secure your account.</p>
       <form method="POST" action="/api/auth/password-reset">
         <input type="hidden" name="token" value="${escapeHtml(token)}" />
-        <input name="newPassword" type="password" minlength="6" required placeholder="New password (min 6 chars)"
+        <input name="newPassword" type="password" minlength="8" required placeholder="New password (8+ chars, number & symbol)"
           style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;margin-bottom:10px;" />
         <button type="submit" style="width:100%;background:#1d4ed8;color:#fff;border:none;border-radius:8px;padding:10px 12px;font-weight:700;cursor:pointer;">
           Update Password
@@ -230,8 +231,12 @@ module.exports = function registerAuthRoutes(app, deps) {
   app.post("/api/auth/password-reset", express.urlencoded({ extended: false }), async (req, res) => {
     const token = String(req.body?.token || "").trim();
     const newPassword = String(req.body?.newPassword || "");
-    if (!token || newPassword.length < 6) {
-      return res.status(400).send("Invalid reset request. Password must be at least 6 characters.");
+    if (!token) {
+      return res.status(400).send("Invalid reset request.");
+    }
+    const pwCheck = validatePasswordStrength(newPassword);
+    if (!pwCheck.ok) {
+      return res.status(400).send(`Invalid reset request. ${pwCheck.message}`);
     }
     const verified = verifyPasswordResetToken(token);
     if (!verified.ok) {

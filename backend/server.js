@@ -1163,12 +1163,27 @@ function safeUser(user) {
   };
 }
 
+function validatePasswordStrength(password) {
+  const p = String(password || "");
+  if (p.length < 8) {
+    return { ok: false, message: "Password must be at least 8 characters." };
+  }
+  if (!/\d/.test(p)) {
+    return { ok: false, message: "Password must include at least one number." };
+  }
+  if (!/[^A-Za-z0-9]/.test(p)) {
+    return { ok: false, message: "Password must include at least one symbol." };
+  }
+  return { ok: true };
+}
+
 async function createUserAccount({ email, username, password }) {
   if (!email || !username || !password) {
     return { ok: false, status: 400, message: "email, username, and password are required." };
   }
-  if (String(password).length < 6) {
-    return { ok: false, status: 400, message: "Password must be at least 6 characters." };
+  const pwCheck = validatePasswordStrength(password);
+  if (!pwCheck.ok) {
+    return { ok: false, status: 400, message: pwCheck.message };
   }
 
   let users = [];
@@ -1712,6 +1727,7 @@ registerHealthRoutes(app, {
 
 registerAuthRoutes(app, {
   createUserAccount,
+  validatePasswordStrength,
   safeUser,
   readProfileFromSheet,
   upsertProfileToSheet,
