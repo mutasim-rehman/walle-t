@@ -1,5 +1,6 @@
 # Walle-T
 
+
 Trading + financial-advisor simulator. **Frontend** is a Vite/React SPA deployed on Vercel; **backend** is an Express service deployed on Render with Google Sheets as the data layer.
 
 Live URL: `https://walle-t.vercel.app`.
